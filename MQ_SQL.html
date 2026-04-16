@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>异步事务竞态条件时序演示</title>
+  <!-- 引入 Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 引入 Lucide 图标库 -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    /* 自定义动画过渡效果 */
+    .arrow-container {
+      transition: opacity 0.4s ease-in-out;
+    }
+    .pulse-border {
+      animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    @keyframes pulse-ring {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.7); }
+      50% { box-shadow: 0 0 0 4px rgba(248, 113, 113, 0); }
+    }
+  </style>
+</head>
+<body class="bg-slate-200 p-4 md:p-8 font-sans min-h-screen flex items-center justify-center">
+
+  <div class="flex flex-col h-full w-full bg-slate-50 max-w-5xl mx-auto rounded-xl shadow-2xl border border-slate-300">
+    
+    <!-- 顶部控制面板 -->
+    <div class="flex flex-col md:flex-row justify-between items-center bg-white p-4 rounded-t-xl shadow-sm border-b border-slate-200 gap-4 z-30 relative">
+      <div class="flex-1 w-full">
+        <label class="block text-sm font-semibold text-slate-700 mb-1">选择场景：</label>
+        <select id="scenario-select" class="w-full p-2.5 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-slate-50 text-slate-800 transition-shadow">
+          <option value="RACE">场景 1: 竞态隐患 (读发生在Commit之前)</option>
+          <option value="SOLUTION1">场景 2: 方案一 (保证Commit后才发MQ)</option>
+          <option value="SOLUTION2">场景 3: 方案二 (老庞查询不到延迟重试)</option>
+        </select>
+      </div>
+      
+      <div class="flex gap-3 w-full md:w-auto mt-2 md:mt-0 items-end">
+        <button id="play-btn" class="flex-1 md:flex-none flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-md font-medium transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed">
+          <i data-lucide="play" class="w-4 h-4"></i> <span id="play-text">开始演示</span>
+        </button>
+        <button id="reset-btn" class="flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 px-5 py-2.5 rounded-md font-medium transition-colors shadow-sm">
+          <i data-lucide="rotate-ccw" class="w-4 h-4"></i> 重置
+        </button>
+      </div>
+    </div>
+
+    <!-- 核心时序图区域 -->
+    <div class="relative flex-1 bg-white overflow-hidden min-h-[550px] p-4 pt-16">
+      
+      <!-- 生命周期垂直线段 -->
+      <div id="vertical-lines" class="absolute inset-0 flex justify-between px-0 pt-20 pb-8 z-0">
+        <!-- JS 动态注入 -->
+      </div>
+
+      <!-- 顶部节点表头 -->
+      <div id="lifelines-header" class="absolute top-0 left-0 right-0 flex justify-between p-4 z-20 bg-gradient-to-b from-white via-white to-transparent">
+        <!-- JS 动态注入 -->
+      </div>
+
+      <!-- 动画箭头与消息 -->
+      <div id="arrows-container" class="relative w-full h-full mt-10 z-10">
+        <!-- JS 动态注入 -->
+      </div>
+      
+    </div>
+
+    <!-- 底部解说日志看板 -->
+    <div class="bg-slate-900 text-slate-300 p-5 rounded-b-xl h-40 overflow-y-auto font-mono text-sm shadow-inner relative" id="log-container">
+      <div class="flex items-center gap-2 mb-3 text-slate-400 border-b border-slate-700 pb-2 sticky top-0 bg-slate-900 z-10">
+        <i data-lucide="clock" class="w-4 h-4"></i> <span class="font-semibold tracking-wider">执行日志分析面板</span>
+      </div>
+      <div id="log-content" class="space-y-3">
+        <!-- JS 动态注入 -->
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // === 数据定义 ===
+    const LIFELINES = [
+      { id: 'producer', name: '刘杰: 订单服务', icon: 'server', color: 'text-blue-600', bg: 'bg-blue-100', border: 'border-blue-500' },
+      { id: 'db', name: '数据库 (MySQL)', icon: 'database', color: 'text-slate-700', bg: 'bg-slate-100', border: 'border-slate-500' },
+      { id: 'mq', name: '消息队列 (MQ)', icon: 'message-square', color: 'text-purple-600', bg: 'bg-purple-100', border: 'border-purple-500' },
+      { id: 'consumer', name: '老庞: 权限服务', icon: 'server', color: 'text-emerald-600', bg: 'bg-emerald-100', border: 'border-emerald-500' },
+    ];
+
+    const SCENARIOS = {
+      RACE: [
+        { step: 1, from: 'producer', to: 'db', label: '1. BEGIN; INSERT 订单主体', desc: '刘杰开启数据库事务，写入数据。注意：此时未COMMIT，数据对外不可见。', status: 'pending', top: 60 },
+        { step: 2, from: 'producer', to: 'mq', label: '2. 异步推送开通权限消息', desc: '代码继续执行，在事务结束前，提前将消息发送给了MQ。', status: 'normal', top: 120 },
+        { step: 3, from: 'mq', to: 'consumer', label: '3. MQ毫秒级推给老庞', desc: 'MQ传输极快，瞬间老庞的服务就收到了消息。', status: 'normal', top: 180 },
+        { step: 4, from: 'consumer', to: 'db', label: '4. SELECT 查询主体信息', desc: '老庞立刻开启读连接查数据库！(核心冲突点发生)', status: 'normal', top: 240, highlight: true },
+        { step: 5, from: 'db', to: 'consumer', label: '5. 返回 NULL (隔离级别限制)', desc: '因为刘杰还没COMMIT，数据库不让老庞读脏数据，返回查不到！', status: 'error', top: 300 },
+        { step: 6, from: 'producer', to: 'db', label: '6. COMMIT (提交写事务)', desc: '刘杰的方法终于执行完，数据库落盘。但太迟了，老庞已经查完了。', status: 'success', top: 360 },
+      ],
+      SOLUTION1: [
+        { step: 1, from: 'producer', to: 'db', label: '1. BEGIN; INSERT 订单主体', desc: '刘杰开启数据库事务，写入数据。', status: 'pending', top: 60 },
+        { step: 2, from: 'producer', to: 'db', label: '2. COMMIT (提交写事务)', desc: '事务先彻底提交落盘，保证数据全局可见！', status: 'success', top: 120 },
+        { step: 3, from: 'producer', to: 'mq', label: '3. 事务提交后，触发MQ发送', desc: '利用Spring @TransactionalEventListener 确保提交后才发消息。', status: 'normal', top: 180 },
+        { step: 4, from: 'mq', to: 'consumer', label: '4. MQ推送消息', desc: '老庞收到消息。', status: 'normal', top: 240 },
+        { step: 5, from: 'consumer', to: 'db', label: '5. SELECT 查询主体信息', desc: '老庞查数据库。此时数据必然已经COMMIT。', status: 'normal', top: 300 },
+        { step: 6, from: 'db', to: 'consumer', label: '6. 返回完整订单数据', desc: '查询成功，老庞顺利赠送权限！', status: 'success', top: 360 },
+      ],
+      SOLUTION2: [
+        { step: 1, from: 'producer', to: 'db', label: '1. BEGIN; INSERT (未提交)', desc: '同原始场景，刘杰发起了写操作。', status: 'pending', top: 40 },
+        { step: 2, from: 'producer', to: 'mq', label: '2. 提前发送MQ消息', desc: '消息提前发出。', status: 'normal', top: 90 },
+        { step: 3, from: 'mq', to: 'consumer', label: '3. MQ推送消息', desc: '老庞收到消息。', status: 'normal', top: 140 },
+        { step: 4, from: 'consumer', to: 'db', label: '4. 第一次 SELECT 查询', desc: '老庞立刻查询。', status: 'normal', top: 190 },
+        { step: 5, from: 'db', to: 'consumer', label: '5. 返回 NULL', desc: '查不到数据。', status: 'error', top: 240 },
+        { step: 6, from: 'consumer', to: 'consumer', label: '6. 抛出重试异常，等待', desc: '老庞不丢弃数据，通知MQ稍后重试。', status: 'warning', top: 290 },
+        { step: 7, from: 'producer', to: 'db', label: '7. COMMIT (提交写事务)', desc: '在老庞等待期间，刘杰的事务终于提交了！', status: 'success', top: 340 },
+        { step: 8, from: 'mq', to: 'consumer', label: '8. MQ触发延迟重试', desc: '几秒后，MQ再次把消息推送给老庞。', status: 'normal', top: 390 },
+        { step: 9, from: 'consumer', to: 'db', label: '9. 第二次 SELECT 查询', desc: '老庞再次查询数据库。', status: 'normal', top: 440 },
+        { step: 10, from: 'db', to: 'consumer', label: '10. 返回完整数据', desc: '重试成功，获取到了刚刚COMMIT的数据！', status: 'success', top: 490 },
+      ]
+    };
+
+    // === 状态管理 ===
+    let activeScenario = 'RACE';
+    let currentStep = 0;
+    let isPlaying = false;
+    let playInterval = null;
+
+    // === DOM 元素引用 ===
+    const selectEl = document.getElementById('scenario-select');
+    const playBtn = document.getElementById('play-btn');
+    const resetBtn = document.getElementById('reset-btn');
+    const playText = document.getElementById('play-text');
+    const lifelinesHeader = document.getElementById('lifelines-header');
+    const verticalLines = document.getElementById('vertical-lines');
+    const arrowsContainer = document.getElementById('arrows-container');
+    const logContent = document.getElementById('log-content');
+    const logContainer = document.getElementById('log-container');
+
+    // === 渲染函数 ===
+    
+    function renderStaticUI() {
+      // 渲染垂直参考线
+      verticalLines.innerHTML = LIFELINES.map(() => 
+        `<div class="relative w-1/4 flex flex-col items-center">
+          <div class="absolute top-0 bottom-0 w-px bg-slate-200 border-r-2 border-dashed border-slate-300"></div>
+        </div>`
+      ).join('');
+    }
+
+    function renderDynamicUI() {
+      // 1. 渲染顶部节点头 (因为数据库状态可能会变)
+      lifelinesHeader.innerHTML = LIFELINES.map(ll => {
+        let dbStatusHtml = '';
+        if (ll.id === 'db' && currentStep > 0 && activeScenario === 'RACE') {
+          const isCommitted = currentStep >= 6;
+          dbStatusHtml = `
+            <div class="absolute -bottom-8 w-36 text-center text-[11px] font-bold ${isCommitted ? 'text-emerald-600 border-emerald-200' : 'text-red-500 animate-pulse border-red-200'} bg-white border rounded shadow-md py-1 px-2 z-50">
+              ${isCommitted ? '✅ 事务已提交' : '🔒 事务未提交 (行锁)'}
+            </div>
+          `;
+        }
+
+        return `
+          <div class="w-1/4 flex flex-col items-center">
+            <div class="flex flex-col items-center justify-center p-3 rounded-lg border-2 shadow-sm bg-white ${ll.border} ${ll.color} min-w-[100px] md:min-w-[140px] relative transition-transform hover:scale-105">
+              <i data-lucide="${ll.icon}" class="w-7 h-7 mb-1.5"></i>
+              <span class="text-xs md:text-sm font-bold text-center">${ll.name}</span>
+              ${dbStatusHtml}
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // 2. 渲染箭头
+      const scenarioData = SCENARIOS[activeScenario];
+      arrowsContainer.innerHTML = scenarioData.map((action, index) => {
+        const isVisible = index < currentStep;
+        
+        const fromIdx = LIFELINES.findIndex(l => l.id === action.from);
+        let toIdx = LIFELINES.findIndex(l => l.id === action.to);
+        
+        // 处理自我循环（如重试等待）
+        if (action.from === action.to) {
+          toIdx = fromIdx + 0.5;
+        }
+
+        const isLeftToRight = fromIdx < toIdx;
+        const startX = `${25 * fromIdx + 12.5}%`;
+        const endX = `${25 * toIdx + 12.5}%`;
+        const leftPos = isLeftToRight ? startX : endX;
+        const widthCalc = `calc(${Math.abs(toIdx - fromIdx) * 25}% - 4px)`;
+
+        // 样式判定
+        let colorClass = "bg-slate-400";
+        let textClass = "text-slate-700";
+        let borderClass = "border-slate-400";
+        
+        if (action.status === 'error') { colorClass = "bg-red-500"; textClass = "text-red-600 font-bold"; borderClass = "border-red-500"; }
+        else if (action.status === 'success') { colorClass = "bg-emerald-500"; textClass = "text-emerald-700 font-bold"; borderClass = "border-emerald-500"; }
+        else if (action.status === 'pending') { colorClass = "bg-transparent"; textClass = "text-blue-600 font-semibold"; borderClass = "border-blue-400"; }
+        else if (action.status === 'warning') { colorClass = "bg-amber-500"; textClass = "text-amber-700 font-bold"; borderClass = "border-amber-500"; }
+
+        const pendingLineStyle = action.status === 'pending' ? `border-t-2 border-dashed ${borderClass}` : colorClass;
+        const highlightStyle = action.highlight ? 'ring-2 ring-red-400 pulse-border' : '';
+
+        return `
+          <div class="arrow-container absolute w-full ${isVisible ? 'opacity-100' : 'opacity-0'}" style="top: ${action.top}px; left: 0; height: 2px;">
+            <div class="absolute flex items-center justify-center flex-col" style="left: ${leftPos}; width: ${widthCalc}; margin-left: 2px; transform: translateY(-50%);">
+              
+              <!-- 标签文字 -->
+              <span class="text-xs md:text-sm whitespace-nowrap px-3 py-1 rounded-full bg-white bg-opacity-95 shadow-sm border border-slate-100 ${textClass} ${highlightStyle} -mt-7 z-10 transition-all">
+                ${action.label}
+              </span>
+              
+              <!-- 箭头主体线条 -->
+              <div class="w-full h-0.5 relative ${pendingLineStyle}">
+                <!-- 箭头头部 -->
+                <div class="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-transparent border-t-2 border-r-2 ${borderClass}"
+                     style="${isLeftToRight ? 'right: -2px;' : 'left: -2px;'} transform: translateY(-50%) rotate(${isLeftToRight ? '45deg' : '-135deg'});">
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // 3. 渲染底部日志
+      if (currentStep === 0) {
+        logContent.innerHTML = `<p class="text-slate-500 italic mt-2">请点击上方“开始演示”按钮查看时序流转...</p>`;
+      } else {
+        logContent.innerHTML = scenarioData.slice(0, currentStep).map((action, idx) => {
+          const isLatest = idx === currentStep - 1;
+          
+          let iconHtml = '';
+          if (action.status === 'error') iconHtml = `<i data-lucide="shield-alert" class="w-4 h-4 inline mr-1 text-red-500 mb-0.5"></i>`;
+          if (action.status === 'success') iconHtml = `<i data-lucide="shield-check" class="w-4 h-4 inline mr-1 text-emerald-500 mb-0.5"></i>`;
+          if (action.status === 'warning') iconHtml = `<i data-lucide="alert-circle" class="w-4 h-4 inline mr-1 text-amber-500 mb-0.5"></i>`;
+
+          const labelColor = action.status === 'error' ? 'text-red-400' : (action.status === 'success' ? 'text-emerald-400' : (action.status === 'warning' ? 'text-amber-400' : ''));
+
+          return `
+            <div class="flex gap-3 ${isLatest ? 'text-white font-semibold transform transition-transform translate-x-1' : 'text-slate-400 opacity-80'} transition-all duration-300">
+              <span class="shrink-0 text-slate-500">[00:0${idx+1}]</span>
+              <p class="leading-relaxed">
+                ${iconHtml}
+                <span class="${labelColor}">${action.label}：</span>
+                ${action.desc}
+              </p>
+            </div>
+          `;
+        }).join('');
+        
+        // 自动滚动到底部
+        setTimeout(() => {
+          logContainer.scrollTop = logContainer.scrollHeight;
+        }, 50);
+      }
+
+      // 重新生成图标
+      lucide.createIcons();
+    }
+
+    function updateButtons() {
+      const scenarioData = SCENARIOS[activeScenario];
+      if (isPlaying) {
+        playText.textContent = "演示中...";
+        playBtn.disabled = true;
+        selectEl.disabled = true;
+        playBtn.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> <span id="play-text">演示中...</span>`;
+      } else {
+        selectEl.disabled = false;
+        playBtn.disabled = false;
+        if (currentStep > 0 && currentStep < scenarioData.length) {
+          playBtn.innerHTML = `<i data-lucide="play" class="w-4 h-4"></i> <span id="play-text">继续</span>`;
+        } else if (currentStep >= scenarioData.length) {
+          playBtn.innerHTML = `<i data-lucide="rotate-cw" class="w-4 h-4"></i> <span id="play-text">重新播放</span>`;
+        } else {
+          playBtn.innerHTML = `<i data-lucide="play" class="w-4 h-4"></i> <span id="play-text">开始演示</span>`;
+        }
+      }
+      lucide.createIcons();
+    }
+
+    // === 事件处理 ===
+
+    function handlePlay() {
+      const scenarioData = SCENARIOS[activeScenario];
+      
+      // 如果到底了，点击播放自动重置
+      if (currentStep >= scenarioData.length) {
+        currentStep = 0;
+      }
+      
+      isPlaying = true;
+      updateButtons();
+      
+      playInterval = setInterval(() => {
+        currentStep++;
+        if (currentStep >= scenarioData.length) {
+          clearInterval(playInterval);
+          isPlaying = false;
+        }
+        renderDynamicUI();
+        updateButtons();
+      }, 1500); // 1.5秒一步
+      
+      // 立即触发第一步渲染
+      if(currentStep === 0) {
+          currentStep = 1;
+      }
+      renderDynamicUI();
+      updateButtons();
+    }
+
+    function handleReset() {
+      clearInterval(playInterval);
+      isPlaying = false;
+      currentStep = 0;
+      renderDynamicUI();
+      updateButtons();
+    }
+
+    function handleScenarioChange(e) {
+      activeScenario = e.target.value;
+      handleReset();
+    }
+
+    // === 初始化 ===
+    selectEl.addEventListener('change', handleScenarioChange);
+    playBtn.addEventListener('click', handlePlay);
+    resetBtn.addEventListener('click', handleReset);
+
+    // 初始渲染
+    renderStaticUI();
+    renderDynamicUI();
+    updateButtons();
+
+  </script>
+</body>
+</html>
