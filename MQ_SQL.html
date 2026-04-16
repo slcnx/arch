@@ -33,7 +33,7 @@
         <select id="scenario-select" class="w-full p-2.5 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-slate-50 text-slate-800 transition-shadow">
           <option value="RACE">场景 1: 竞态隐患 (读发生在Commit之前)</option>
           <option value="SOLUTION1">场景 2: 方案一 (保证Commit后才发MQ)</option>
-          <option value="SOLUTION2">场景 3: 方案二 (老庞查询不到延迟重试)</option>
+          <option value="SOLUTION2">场景 3: 方案二 (开发B查询不到延迟重试)</option>
         </select>
       </div>
       
@@ -82,39 +82,39 @@
   <script>
     // === 数据定义 ===
     const LIFELINES = [
-      { id: 'producer', name: '刘杰: 订单服务', icon: 'server', color: 'text-blue-600', bg: 'bg-blue-100', border: 'border-blue-500' },
+      { id: 'producer', name: '开发A: 订单服务', icon: 'server', color: 'text-blue-600', bg: 'bg-blue-100', border: 'border-blue-500' },
       { id: 'db', name: '数据库 (MySQL)', icon: 'database', color: 'text-slate-700', bg: 'bg-slate-100', border: 'border-slate-500' },
       { id: 'mq', name: '消息队列 (MQ)', icon: 'message-square', color: 'text-purple-600', bg: 'bg-purple-100', border: 'border-purple-500' },
-      { id: 'consumer', name: '老庞: 权限服务', icon: 'server', color: 'text-emerald-600', bg: 'bg-emerald-100', border: 'border-emerald-500' },
+      { id: 'consumer', name: '开发B: 权限服务', icon: 'server', color: 'text-emerald-600', bg: 'bg-emerald-100', border: 'border-emerald-500' },
     ];
 
     const SCENARIOS = {
       RACE: [
-        { step: 1, from: 'producer', to: 'db', label: '1. BEGIN; INSERT 订单主体', desc: '刘杰开启数据库事务，写入数据。注意：此时未COMMIT，数据对外不可见。', status: 'pending', top: 60 },
+        { step: 1, from: 'producer', to: 'db', label: '1. BEGIN; INSERT 订单主体', desc: '开发A开启数据库事务，写入数据。注意：此时未COMMIT，数据对外不可见。', status: 'pending', top: 60 },
         { step: 2, from: 'producer', to: 'mq', label: '2. 异步推送开通权限消息', desc: '代码继续执行，在事务结束前，提前将消息发送给了MQ。', status: 'normal', top: 120 },
-        { step: 3, from: 'mq', to: 'consumer', label: '3. MQ毫秒级推给老庞', desc: 'MQ传输极快，瞬间老庞的服务就收到了消息。', status: 'normal', top: 180 },
-        { step: 4, from: 'consumer', to: 'db', label: '4. SELECT 查询主体信息', desc: '老庞立刻开启读连接查数据库！(核心冲突点发生)', status: 'normal', top: 240, highlight: true },
-        { step: 5, from: 'db', to: 'consumer', label: '5. 返回 NULL (隔离级别限制)', desc: '因为刘杰还没COMMIT，数据库不让老庞读脏数据，返回查不到！', status: 'error', top: 300 },
-        { step: 6, from: 'producer', to: 'db', label: '6. COMMIT (提交写事务)', desc: '刘杰的方法终于执行完，数据库落盘。但太迟了，老庞已经查完了。', status: 'success', top: 360 },
+        { step: 3, from: 'mq', to: 'consumer', label: '3. MQ毫秒级推给开发B', desc: 'MQ传输极快，瞬间开发B的服务就收到了消息。', status: 'normal', top: 180 },
+        { step: 4, from: 'consumer', to: 'db', label: '4. SELECT 查询主体信息', desc: '开发B立刻开启读连接查数据库！(核心冲突点发生)', status: 'normal', top: 240, highlight: true },
+        { step: 5, from: 'db', to: 'consumer', label: '5. 返回 NULL (隔离级别限制)', desc: '因为开发A还没COMMIT，数据库不让开发B读脏数据，返回查不到！', status: 'error', top: 300 },
+        { step: 6, from: 'producer', to: 'db', label: '6. COMMIT (提交写事务)', desc: '开发A的方法终于执行完，数据库落盘。但太迟了，开发B已经查完了。', status: 'success', top: 360 },
       ],
       SOLUTION1: [
-        { step: 1, from: 'producer', to: 'db', label: '1. BEGIN; INSERT 订单主体', desc: '刘杰开启数据库事务，写入数据。', status: 'pending', top: 60 },
+        { step: 1, from: 'producer', to: 'db', label: '1. BEGIN; INSERT 订单主体', desc: '开发A开启数据库事务，写入数据。', status: 'pending', top: 60 },
         { step: 2, from: 'producer', to: 'db', label: '2. COMMIT (提交写事务)', desc: '事务先彻底提交落盘，保证数据全局可见！', status: 'success', top: 120 },
         { step: 3, from: 'producer', to: 'mq', label: '3. 事务提交后，触发MQ发送', desc: '利用Spring @TransactionalEventListener 确保提交后才发消息。', status: 'normal', top: 180 },
-        { step: 4, from: 'mq', to: 'consumer', label: '4. MQ推送消息', desc: '老庞收到消息。', status: 'normal', top: 240 },
-        { step: 5, from: 'consumer', to: 'db', label: '5. SELECT 查询主体信息', desc: '老庞查数据库。此时数据必然已经COMMIT。', status: 'normal', top: 300 },
-        { step: 6, from: 'db', to: 'consumer', label: '6. 返回完整订单数据', desc: '查询成功，老庞顺利赠送权限！', status: 'success', top: 360 },
+        { step: 4, from: 'mq', to: 'consumer', label: '4. MQ推送消息', desc: '开发B收到消息。', status: 'normal', top: 240 },
+        { step: 5, from: 'consumer', to: 'db', label: '5. SELECT 查询主体信息', desc: '开发B查数据库。此时数据必然已经COMMIT。', status: 'normal', top: 300 },
+        { step: 6, from: 'db', to: 'consumer', label: '6. 返回完整订单数据', desc: '查询成功，开发B顺利赠送权限！', status: 'success', top: 360 },
       ],
       SOLUTION2: [
-        { step: 1, from: 'producer', to: 'db', label: '1. BEGIN; INSERT (未提交)', desc: '同原始场景，刘杰发起了写操作。', status: 'pending', top: 40 },
+        { step: 1, from: 'producer', to: 'db', label: '1. BEGIN; INSERT (未提交)', desc: '同原始场景，开发A发起了写操作。', status: 'pending', top: 40 },
         { step: 2, from: 'producer', to: 'mq', label: '2. 提前发送MQ消息', desc: '消息提前发出。', status: 'normal', top: 90 },
-        { step: 3, from: 'mq', to: 'consumer', label: '3. MQ推送消息', desc: '老庞收到消息。', status: 'normal', top: 140 },
-        { step: 4, from: 'consumer', to: 'db', label: '4. 第一次 SELECT 查询', desc: '老庞立刻查询。', status: 'normal', top: 190 },
+        { step: 3, from: 'mq', to: 'consumer', label: '3. MQ推送消息', desc: '开发B收到消息。', status: 'normal', top: 140 },
+        { step: 4, from: 'consumer', to: 'db', label: '4. 第一次 SELECT 查询', desc: '开发B立刻查询。', status: 'normal', top: 190 },
         { step: 5, from: 'db', to: 'consumer', label: '5. 返回 NULL', desc: '查不到数据。', status: 'error', top: 240 },
-        { step: 6, from: 'consumer', to: 'consumer', label: '6. 抛出重试异常，等待', desc: '老庞不丢弃数据，通知MQ稍后重试。', status: 'warning', top: 290 },
-        { step: 7, from: 'producer', to: 'db', label: '7. COMMIT (提交写事务)', desc: '在老庞等待期间，刘杰的事务终于提交了！', status: 'success', top: 340 },
-        { step: 8, from: 'mq', to: 'consumer', label: '8. MQ触发延迟重试', desc: '几秒后，MQ再次把消息推送给老庞。', status: 'normal', top: 390 },
-        { step: 9, from: 'consumer', to: 'db', label: '9. 第二次 SELECT 查询', desc: '老庞再次查询数据库。', status: 'normal', top: 440 },
+        { step: 6, from: 'consumer', to: 'consumer', label: '6. 抛出重试异常，等待', desc: '开发B不丢弃数据，通知MQ稍后重试。', status: 'warning', top: 290 },
+        { step: 7, from: 'producer', to: 'db', label: '7. COMMIT (提交写事务)', desc: '在开发B等待期间，开发A的事务终于提交了！', status: 'success', top: 340 },
+        { step: 8, from: 'mq', to: 'consumer', label: '8. MQ触发延迟重试', desc: '几秒后，MQ再次把消息推送给开发B。', status: 'normal', top: 390 },
+        { step: 9, from: 'consumer', to: 'db', label: '9. 第二次 SELECT 查询', desc: '开发B再次查询数据库。', status: 'normal', top: 440 },
         { step: 10, from: 'db', to: 'consumer', label: '10. 返回完整数据', desc: '重试成功，获取到了刚刚COMMIT的数据！', status: 'success', top: 490 },
       ]
     };
