@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Linux Kernel Netfilter Canvas Simulator</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --panel: #161b22;
+            --border: #30363d;
+            --text: #c9d1d9;
+            --accent-blue: #58a6ff;
+            --accent-purple: #a371f7;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        .container {
+            background-color: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            width: 900px;
+        }
+
+        /* 内核切换 Tab 样式 */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 10px;
+        }
+
+        .tab {
+            padding: 8px 16px;
+            cursor: pointer;
+            border-radius: 6px;
+            font-size: 14px;
+            color: var(--text-muted);
+            transition: all 0.2s;
+            border: 1px solid transparent;
+        }
+
+        .tab:hover { background: #21262d; }
+        .tab.active {
+            background: #21262d;
+            border-color: var(--accent-blue);
+            color: var(--accent-blue);
+            font-weight: bold;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        canvas {
+            background-color: #000;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 20px;
+            padding: 15px;
+            background: var(--bg);
+            border-radius: 8px;
+            align-items: center;
+        }
+
+        .control-item {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .btn-group {
+            display: flex;
+            background: #21262d;
+            border-radius: 6px;
+            padding: 2px;
+        }
+
+        button {
+            background: none;
+            border: none;
+            color: #8b949e;
+            padding: 6px 15px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+            border-radius: 4px;
+        }
+
+        button.active.blue { background: var(--accent-blue); color: white; }
+        button.active.red { background: var(--accent-red); color: white; }
+
+        .btn-send {
+            background: var(--accent-green);
+            color: white;
+            border: none;
+            padding: 10px 25px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .btn-send:hover { opacity: 0.9; }
+
+        .terminal {
+            margin-top: 15px;
+            background: #000;
+            height: 100px;
+            border-radius: 6px;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            color: #3fb950;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="tabs">
+        <div id="tab-legacy" class="tab" onclick="setKernel('legacy')">Legacy (Kernel < 5.x)</div>
+        <div id="tab-modern" class="tab active" onclick="setKernel('modern')">Modern (Kernel 5.x+)</div>
+    </div>
+
+    <div class="header">
+        <div id="ver-title" style="font-weight: bold; font-size: 18px;">Netfilter 流量路径模拟 (Modern 模式)</div>
+        <div id="ver-desc" style="font-size: 12px; color: #8b949e;">内核版本: 5.x+ | 机制: nftables 串联检查 (一票否决)</div>
+    </div>
+
+    <canvas id="netCanvas" width="860" height="300"></canvas>
+
+    <div class="terminal" id="term">
+        <div>[SYSTEM] 系统初始化完成. 流量引擎就绪.</div>
+    </div>
+
+    <div class="controls">
+        <div class="control-item">
+            <span>iptables 规则</span>
+            <div class="btn-group">
+                <button id="ipt-accept" class="active blue" onclick="setMode('ipt', 'ACCEPT')">ACCEPT</button>
+                <button id="ipt-drop" onclick="setMode('ipt', 'DROP')">DROP</button>
+            </div>
+        </div>
+
+        <div class="control-item">
+            <span>firewalld 规则</span>
+            <div class="btn-group">
+                <button id="fwd-accept" onclick="setMode('fwd', 'ACCEPT')">ACCEPT</button>
+                <button id="fwd-reject" class="active red" onclick="setMode('fwd', 'REJECT')">REJECT</button>
+            </div>
+        </div>
+
+        <button class="btn-send" onclick="startPacket()">发送 TCP 数据包</button>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('netCanvas');
+    const ctx = canvas.getContext('2d');
+    const term = document.getElementById('term');
+
+    let kernelVersion = 'modern'; // 'legacy' or 'modern'
+    let iptMode = 'ACCEPT';
+    let fwdMode = 'REJECT';
+    let animationId = null;
+
+    // 坐标定义
+    const nodes = {
+        entry: { x: 50, y: 150 },
+        iptables: { x: 250, y: 150, label: 'iptables 链', color: '#58a6ff' },
+        firewalld: { x: 500, y: 150, label: 'firewalld 链', color: '#a371f7' },
+        mysql: { x: 750, y: 150, label: 'MySQL App', color: '#3fb950' }
+    };
+
+    let packet = null;
+    let icmp = null;
+
+    function setKernel(ver) {
+        kernelVersion = ver;
+        document.getElementById('tab-legacy').className = ver === 'legacy' ? 'tab active' : 'tab';
+        document.getElementById('tab-modern').className = ver === 'modern' ? 'tab active' : 'tab';
+        
+        if (ver === 'legacy') {
+            document.getElementById('ver-title').innerText = 'Netfilter 流量路径模拟 (Legacy 模式)';
+            document.getElementById('ver-desc').innerText = '内核版本: < 5.x | 机制: 共享同一后端 (iptables -I 可直接绕过 firewalld)';
+            addLog('切换至 Legacy 模式: iptables 与 firewalld 共享同一后端。', '#58a6ff');
+        } else {
+            document.getElementById('ver-title').innerText = 'Netfilter 流量路径模拟 (Modern 模式)';
+            document.getElementById('ver-desc').innerText = '内核版本: 5.x+ | 机制: nftables 串联检查 (一票否决制)';
+            addLog('切换至 Modern 模式: 每个工具拥有独立的内核链。', '#a371f7');
+        }
+    }
+
+    function setMode(type, val) {
+        if(type === 'ipt') {
+            iptMode = val;
+            document.getElementById('ipt-accept').className = val === 'ACCEPT' ? 'active blue' : '';
+            document.getElementById('ipt-drop').className = val === 'DROP' ? 'active red' : '';
+        } else {
+            fwdMode = val;
+            document.getElementById('fwd-accept').className = val === 'ACCEPT' ? 'active blue' : '';
+            document.getElementById('fwd-reject').className = val === 'REJECT' ? 'active red' : '';
+        }
+        addLog(`规则更新: ${type === 'ipt' ? 'iptables' : 'firewalld'} -> ${val}`);
+    }
+
+    function addLog(msg, color = '#3fb950') {
+        const div = document.createElement('div');
+        div.style.color = color;
+        div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        term.appendChild(div);
+        term.scrollTop = term.scrollHeight;
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 绘制背景虚线路径
+        ctx.setLineDash([5, 5]);
+        ctx.strokeStyle = '#30363d';
+        ctx.beginPath();
+        ctx.moveTo(nodes.entry.x, nodes.entry.y);
+        ctx.lineTo(nodes.mysql.x, nodes.mysql.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 绘制节点
+        Object.values(nodes).forEach(node => {
+            if(!node.label) return;
+            
+            // Legacy 模式下 firewalld 节点的特殊表现
+            let nodeColor = node.color;
+            let nodeLabel = node.label;
+            
+            if (kernelVersion === 'legacy' && node.label === 'firewalld 链') {
+                ctx.setLineDash([2, 2]);
+                nodeColor = '#484f58'; // 变灰表示共享
+                nodeLabel = 'firewalld (共享后端)';
+            }
+
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = nodeColor;
+            ctx.strokeStyle = nodeColor;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(node.x - 65, node.y - 30, 130, 60);
+            
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = nodeColor;
+            ctx.font = 'bold 12px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(nodeLabel, node.x, node.y + 5);
+            ctx.setLineDash([]);
+        });
+
+        // 绘制数据包
+        if(packet && packet.active) {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = packet.color;
+            ctx.fillStyle = packet.color;
+            ctx.beginPath();
+            ctx.arc(packet.x, packet.y, 8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+
+        // 绘制 ICMP
+        if(icmp && icmp.active) {
+            ctx.fillStyle = '#f85149';
+            ctx.fillRect(icmp.x - 15, icmp.y - 10, 30, 20);
+            ctx.fillStyle = 'white';
+            ctx.font = '10px Arial';
+            ctx.fillText('ICMP', icmp.x, icmp.y + 4);
+        }
+
+        update();
+        animationId = requestAnimationFrame(draw);
+    }
+
+    function update() {
+        if(!packet || !packet.active) return;
+
+        const target = nodes[packet.targetKey];
+        const dx = target.x - packet.x;
+        const dist = Math.abs(dx);
+
+        if(dist > 2) {
+            packet.x += dx * 0.05;
+        } else {
+            handleCollision();
+        }
+
+        if(icmp && icmp.active) {
+            const dxIcmp = nodes.entry.x - icmp.x;
+            if(Math.abs(dxIcmp) > 2) icmp.x += dxIcmp * 0.08;
+            else icmp.active = false;
+        }
+    }
+
+    function handleCollision() {
+        if(packet.targetKey === 'iptables') {
+            if(iptMode === 'DROP') {
+                addLog('CRITICAL: 被 iptables 丢弃 (DROP)', '#f85149');
+                packet.active = false;
+            } else {
+                if (kernelVersion === 'legacy') {
+                    addLog('INFO: [Legacy 模式] iptables ACCEPT。由于共享后端且规则在首行，直接跳过 firewalld 检查！', '#3fb950');
+                    packet.targetKey = 'mysql';
+                } else {
+                    addLog('INFO: [Modern 模式] iptables 放行。但必须进入下一个独立链 firewalld 接受二次审查...', '#a371f7');
+                    packet.targetKey = 'firewalld';
+                }
+                packet.color = '#3fb950';
+            }
+        } else if(packet.targetKey === 'firewalld') {
+            if(fwdMode === 'REJECT') {
+                addLog('ALERT: 被 firewalld 拒绝 (REJECT)', '#f85149');
+                packet.active = false;
+                icmp = { x: packet.x, y: packet.y, active: true };
+            } else {
+                addLog('INFO: firewalld 放行，允许抵达应用层');
+                packet.targetKey = 'mysql';
+                packet.color = '#58a6ff';
+            }
+        } else if(packet.targetKey === 'mysql') {
+            addLog('SUCCESS: 数据包已送达 MySQL (3306 端口)', '#58a6ff');
+            packet.active = false;
+        }
+    }
+
+    function startPacket() {
+        packet = {
+            x: nodes.entry.x,
+            y: nodes.entry.y,
+            targetKey: 'iptables',
+            active: true,
+            color: '#fff'
+        };
+        icmp = null;
+        addLog('>>> 发送 SYN 连接请求包...');
+    }
+
+    draw();
+</script>
+</body>
+</html>
