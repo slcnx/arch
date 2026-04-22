@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Celery 异步调度与前端通信全链路</title>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 保持画布内容像素清晰 */
+        canvas {
+            image-rendering: pixelated;
+        }
+
+        /* 自定义滚动条 */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+    </style>
+</head>
+
+<body class="bg-slate-200 p-4 md:p-8 min-h-screen flex items-center justify-center">
+
+    <div
+        class="flex flex-col w-full max-w-7xl bg-white rounded-xl shadow-2xl border border-slate-300 overflow-hidden font-sans">
+
+        <!-- Header & Controls -->
+        <div
+            class="flex flex-col xl:flex-row justify-between items-center p-4 sm:p-5 border-b border-slate-200 bg-slate-50 gap-4">
+            <div>
+                <h2 class="text-xl font-bold text-slate-800">Celery 异步架构 & 前端通信全链路</h2>
+                <p class="text-sm text-slate-500 mt-1">深度解析：Worker 处理完成后，究竟如何把结果送回浏览器？</p>
+            </div>
+
+            <div class="flex flex-wrap gap-2 justify-center">
+                <button id="btnError"
+                    class="px-3 py-2 rounded-md text-sm font-semibold transition-colors bg-white text-slate-600 border border-slate-300 hover:bg-slate-100">
+                    🚧 异常 (未重启 Worker)
+                </button>
+                <div class="w-px bg-slate-300 mx-1 hidden sm:block"></div>
+                <button id="btnPolling"
+                    class="px-3 py-2 rounded-md text-sm font-semibold transition-colors bg-blue-500 text-white shadow-md">
+                    🔄 正常：短轮询
+                </button>
+                <button id="btnSSE"
+                    class="px-3 py-2 rounded-md text-sm font-semibold transition-colors bg-white text-slate-600 border border-slate-300 hover:bg-slate-100">
+                    🌊 正常：SSE 推送
+                </button>
+                <button id="btnWS"
+                    class="px-3 py-2 rounded-md text-sm font-semibold transition-colors bg-white text-slate-600 border border-slate-300 hover:bg-slate-100">
+                    ⚡ 正常：WebSocket
+                </button>
+                <button id="btnPlayPause"
+                    class="px-3 py-2 rounded-md text-sm bg-slate-800 text-white hover:bg-slate-700 transition-colors flex items-center justify-center w-10 ml-1"
+                    title="暂停动画">
+                    ||
+                </button>
+            </div>
+        </div>
+
+        <!-- Canvas Container -->
+        <div class="w-full relative bg-slate-50/80 h-[680px]" id="canvasContainer">
+            <canvas id="appCanvas" class="w-full h-full block cursor-crosshair"></canvas>
+        </div>
+
+        <!-- Helper text panel (Dynamic) -->
+        <div class="w-full p-5 bg-white border-t border-slate-200 flex gap-4 h-[160px] overflow-y-auto">
+            <div class="text-2xl mt-1" id="iconPanel">🔄</div>
+            <div class="flex-1">
+                <p class="font-bold text-slate-800 text-lg mb-2" id="titlePanel">方案一：前端短轮询 (Polling) 查库</p>
+
+                <!-- ERROR Text -->
+                <div id="textERROR_PATH" class="text-sm text-slate-600 leading-relaxed" style="display: none;">
+                    <p><strong>物理定律应用：进程内存隔离。</strong></p>
+                    <p class="mt-1">Celery Worker 作为常驻后台进程，在启动时会将任务代码加载到内存字典中。即使 Django 网关推送了新的任务签名，只要 Worker 没有执行 <code
+                            class="bg-slate-100 px-1.5 py-0.5 rounded text-red-600 font-mono">celery worker restart</code>，它在自己的内存映射中就找不到该任务，必然引发
+                        <code class="bg-slate-100 px-1 rounded text-slate-800 font-mono">KeyError</code>，导致任务丢失。</p>
+                </div>
+
+                <!-- Polling Text -->
+                <div id="textNORMAL_POLLING" class="text-sm text-slate-600 leading-relaxed">
+                    <p><strong>实现路径：</strong>完全依赖数据库状态。Celery 处理完大模型请求后，将结果写入 PostgreSQL。</p>
+                    <p class="mt-1 text-slate-500">前端毫不知情，只能依靠定时器（如每隔 3 秒）向 Django 发送 GET 请求。<span
+                            class="text-orange-600 font-medium">绝大多数请求都是无效的“空跑”。</span>直到某次查询时，Django
+                        发现数据库里的任务状态变成了“已完成”，才将结果返回给前端。这种方式对服务器资源消耗最大。</p>
+                </div>
+
+                <!-- SSE Text -->
+                <div id="textNORMAL_SSE" class="text-sm text-slate-600 leading-relaxed" style="display: none;">
+                    <p><strong>实现路径：Pub/Sub 广播 + HTTP 长连接 (推荐)。</strong> Celery 本身无法主动联系前端。</p>
+                    <p class="mt-1 text-emerald-700">1. 前端调用 API 后，立刻向 Django 发起 <strong>SSE 订阅连接</strong>。<br>
+                        2. Celery 写完库后，利用 Redis 的 <strong>发布/订阅 (Pub/Sub)</strong> 频道广播一条 <code
+                            class="bg-emerald-50 px-1 py-0.5 rounded">task_done</code> 消息。<br>
+                        3. Django 进程订阅了该频道，收到信号后，立刻顺着那条没断开的 SSE HTTP 连接，把数据“推”给前端浏览器。</p>
+                </div>
+
+                <!-- WebSocket Text -->
+                <div id="textNORMAL_WS" class="text-sm text-slate-600 leading-relaxed" style="display: none;">
+                    <p><strong>实现路径：Pub/Sub 广播 + TCP 全双工连接。</strong></p>
+                    <p class="mt-1 text-indigo-700">与 SSE 类似，后端的物理唤醒机制依然是 <strong>Celery -> Redis Pub/Sub -> Django
+                            (Channels)</strong>。<br>
+                        区别在于前端和 Django 之间维护的是双向的 WebSocket 协议。如果后续需要前端频繁向后端发送指令（如打断 AI 生成、补充上下文），WebSocket
+                        是最优解；如果只是单向等结果，SSE 则更轻量级。</p>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const ACTORS = {
+            user: { id: 'user', label: '前端浏览器', color: '#6366f1' },
+            django: { id: 'django', label: 'Django 网关', color: '#10b981' },
+            redis: { id: 'redis', label: 'Redis (Broker/PubSub)', color: '#ef4444' },
+            celery_old: { id: 'celery_old', label: '旧 Worker', color: '#f59e0b', isError: true },
+            celery_new: { id: 'celery_new', label: '新版 Worker', color: '#3b82f6' },
+            ai: { id: 'ai', label: 'AI 服务 (LLM)', color: '#8b5cf6' },
+            db: { id: 'db', label: 'PostgreSQL', color: '#64748b' },
+        };
+
+        const SCENARIOS = {
+            ERROR_PATH: [
+                { from: 'user', to: 'django', text: '请求拆解任务 (API)', type: 'solid', time: 0 },
+                { from: 'django', to: 'redis', text: "推送任务入列 (Broker)", type: 'solid', time: 1 },
+                { from: 'django', to: 'user', text: '返回 202 (任务已启动)', type: 'dashed', time: 2 },
+                { from: 'redis', to: 'celery_old', text: '旧 Worker 捞取任务', type: 'solid', time: 3 },
+                { from: 'celery_old', to: 'celery_old', text: '内存字典比对... 找不到任务签名!', type: 'loop', time: 4, color: '#ef4444' },
+                { from: 'celery_old', to: 'celery_old', text: '抛出 KeyError / 任务默默死掉', type: 'loop', time: 5, color: '#ef4444', dash: true },
+            ],
+            NORMAL_POLLING: [
+                { from: 'user', to: 'django', text: '1. 请求拆解任务 (API)', type: 'solid', time: 0 },
+                { from: 'django', to: 'redis', text: "2. 推送任务入列", type: 'solid', time: 1 },
+                { from: 'django', to: 'user', text: '3. 返回 202 (已启动)', type: 'dashed', time: 2 },
+                { from: 'redis', to: 'celery_new', text: '4. Worker 捞取任务', type: 'solid', time: 3 },
+                { from: 'user', to: 'django', text: '5. 轮询 (Timer): 查状态', type: 'solid', time: 4, color: '#94a3b8' },
+                { from: 'django', to: 'user', text: '返回: 还在处理中', type: 'dashed', time: 4.8, color: '#94a3b8' },
+                { from: 'celery_new', to: 'ai', text: '6. 请求 LLM 拆解', type: 'solid', time: 5.5 },
+                { from: 'user', to: 'django', text: '7. 轮询 (Timer): 查状态', type: 'solid', time: 6.5, color: '#94a3b8' },
+                { from: 'django', to: 'user', text: '返回: 还在处理中', type: 'dashed', time: 7.3, color: '#94a3b8' },
+                { from: 'ai', to: 'celery_new', text: '8. 响应子任务 JSON', type: 'dashed', time: 8.5 },
+                { from: 'celery_new', to: 'db', text: '9. 事务写入 SubTask', type: 'solid', time: 9.5 },
+                { from: 'user', to: 'django', text: '10. 轮询 (Timer): 查状态', type: 'solid', time: 10.5, color: '#f59e0b', highlight: true },
+                { from: 'django', to: 'db', text: '查询数据库状态', type: 'solid', time: 11.2, color: '#f59e0b' },
+                { from: 'db', to: 'django', text: '状态: 已完成', type: 'dashed', time: 12, color: '#f59e0b' },
+                { from: 'django', to: 'user', text: '11. 200 OK 返回结果数据', type: 'solid', time: 12.8, color: '#3b82f6', highlight: true },
+            ],
+            NORMAL_SSE: [
+                { from: 'user', to: 'django', text: '1. 请求拆解任务 (API)', type: 'solid', time: 0 },
+                { from: 'django', to: 'redis', text: "2. 推送任务入列", type: 'solid', time: 1 },
+                { from: 'django', to: 'user', text: '3. 返回 202 (已启动)', type: 'dashed', time: 2 },
+                { from: 'user', to: 'django', text: '4. GET /sse (订阅该任务且保持连接)', type: 'solid', time: 3, color: '#10b981', highlight: true },
+                { from: 'redis', to: 'celery_new', text: '5. Worker 捞取任务', type: 'solid', time: 4 },
+                { from: 'celery_new', to: 'ai', text: '6. 请求 LLM 拆解', type: 'solid', time: 5 },
+                { from: 'ai', to: 'celery_new', text: '7. 响应子任务 JSON', type: 'dashed', time: 6.5 },
+                { from: 'celery_new', to: 'db', text: '8. 事务写入 SubTask', type: 'solid', time: 7.5 },
+                { from: 'celery_new', to: 'redis', text: '9. Pub 发布: 任务已完成!', type: 'solid', time: 8.8, color: '#8b5cf6', highlight: true },
+                { from: 'redis', to: 'django', text: '10. Sub 触发: Django网关收到广播', type: 'solid', time: 10, color: '#8b5cf6', highlight: true },
+                { from: 'django', to: 'user', text: '11. SSE 流式推送: 下发结果数据', type: 'solid', time: 11.2, color: '#10b981', highlight: true },
+            ],
+            NORMAL_WS: [
+                { from: 'user', to: 'django', text: '1. 请求拆解任务 (API)', type: 'solid', time: 0 },
+                { from: 'django', to: 'redis', text: "2. 推送任务入列", type: 'solid', time: 1 },
+                { from: 'django', to: 'user', text: '3. 返回 202 (已启动)', type: 'dashed', time: 2 },
+                { from: 'user', to: 'django', text: '4. 升级为 WebSocket 双向连接', type: 'solid', time: 3, color: '#6366f1', highlight: true },
+                { from: 'redis', to: 'celery_new', text: '5. Worker 捞取任务', type: 'solid', time: 4 },
+                { from: 'celery_new', to: 'ai', text: '6. 请求 LLM 拆解', type: 'solid', time: 5 },
+                { from: 'ai', to: 'celery_new', text: '7. 响应子任务 JSON', type: 'dashed', time: 6.5 },
+                { from: 'celery_new', to: 'db', text: '8. 事务写入 SubTask', type: 'solid', time: 7.5 },
+                { from: 'celery_new', to: 'redis', text: '9. Pub 发布: 任务已完成!', type: 'solid', time: 8.8, color: '#8b5cf6', highlight: true },
+                { from: 'redis', to: 'django', text: '10. Sub 触发: Django(Channels)收到', type: 'solid', time: 10, color: '#8b5cf6', highlight: true },
+                { from: 'django', to: 'user', text: '11. WS 实时推送: 下发结果数据', type: 'solid', time: 11.2, color: '#6366f1', highlight: true },
+            ]
+        };
+
+        // State
+        let scenario = 'NORMAL_POLLING';
+        let isPlaying = true;
+        let animTime = 0;
+        let lastFrame = 0;
+        let reqId;
+
+        // DOM elements
+        const canvas = document.getElementById('appCanvas');
+        const ctx = canvas.getContext('2d');
+        const btnPlayPause = document.getElementById('btnPlayPause');
+
+        const tabs = ['ERROR_PATH', 'NORMAL_POLLING', 'NORMAL_SSE', 'NORMAL_WS'];
+        const titlePanel = document.getElementById('titlePanel');
+        const iconPanel = document.getElementById('iconPanel');
+
+        // Logic to switch tabs
+        function setScenario(scen) {
+            scenario = scen;
+            animTime = 0;
+
+            // Buttons UI
+            document.getElementById('btnError').className = `px-3 py-2 rounded-md text-sm font-semibold transition-colors ${scenario === 'ERROR_PATH' ? 'bg-red-500 text-white shadow-md' : 'bg-white text-slate-600 border border-slate-300 hover:bg-slate-100'}`;
+            document.getElementById('btnPolling').className = `px-3 py-2 rounded-md text-sm font-semibold transition-colors ${scenario === 'NORMAL_POLLING' ? 'bg-blue-500 text-white shadow-md' : 'bg-white text-slate-600 border border-slate-300 hover:bg-slate-100'}`;
+            document.getElementById('btnSSE').className = `px-3 py-2 rounded-md text-sm font-semibold transition-colors ${scenario === 'NORMAL_SSE' ? 'bg-emerald-500 text-white shadow-md' : 'bg-white text-slate-600 border border-slate-300 hover:bg-slate-100'}`;
+            document.getElementById('btnWS').className = `px-3 py-2 rounded-md text-sm font-semibold transition-colors ${scenario === 'NORMAL_WS' ? 'bg-indigo-500 text-white shadow-md' : 'bg-white text-slate-600 border border-slate-300 hover:bg-slate-100'}`;
+
+            // Text Panels
+            tabs.forEach(tab => document.getElementById(`text${tab}`).style.display = 'none');
+            document.getElementById(`text${scenario}`).style.display = 'block';
+
+            if (scenario === 'ERROR_PATH') { titlePanel.innerText = '异常防御测试：重启 Worker 的重要性'; iconPanel.innerText = '🚧'; }
+            if (scenario === 'NORMAL_POLLING') { titlePanel.innerText = '方案一：前端短轮询 (Polling) 查库'; iconPanel.innerText = '🔄'; }
+            if (scenario === 'NORMAL_SSE') { titlePanel.innerText = '方案二：单向流式推送 (Server-Sent Events) + Pub/Sub'; iconPanel.innerText = '🌊'; }
+            if (scenario === 'NORMAL_WS') { titlePanel.innerText = '方案三：双向实时通信 (WebSocket) + Pub/Sub'; iconPanel.innerText = '⚡'; }
+        }
+
+        document.getElementById('btnError').addEventListener('click', () => setScenario('ERROR_PATH'));
+        document.getElementById('btnPolling').addEventListener('click', () => setScenario('NORMAL_POLLING'));
+        document.getElementById('btnSSE').addEventListener('click', () => setScenario('NORMAL_SSE'));
+        document.getElementById('btnWS').addEventListener('click', () => setScenario('NORMAL_WS'));
+
+        btnPlayPause.addEventListener('click', () => {
+            isPlaying = !isPlaying;
+            btnPlayPause.innerHTML = isPlaying ? '||' : '▶';
+            btnPlayPause.title = isPlaying ? "暂停动画" : "播放动画";
+        });
+
+        // Setup Canvas
+        function setupCanvas() {
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.parentElement.getBoundingClientRect();
+            if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
+                canvas.width = rect.width * dpr;
+                canvas.height = rect.height * dpr;
+            }
+            ctx.resetTransform();
+            ctx.scale(dpr, dpr);
+            return { w: rect.width, h: rect.height };
+        }
+
+        // Render Utilities
+        function drawArrow(ctx, fromX, fromY, toX, toY, text, progress, type = 'solid', customColor = '#334155', highlight = false) {
+            if (progress <= 0) return;
+
+            const dx = toX - fromX;
+            const dy = toY - fromY;
+            const currentX = fromX + dx * Math.min(progress, 1);
+            const currentY = fromY + dy * Math.min(progress, 1);
+
+            ctx.beginPath();
+            ctx.moveTo(fromX, fromY);
+            ctx.lineTo(currentX, currentY);
+
+            ctx.strokeStyle = customColor;
+            ctx.lineWidth = highlight ? 3 : 2;
+            ctx.setLineDash(type === 'dashed' ? [5, 5] : []);
+            ctx.stroke();
+
+            if (progress >= 0.95) {
+                const angle = Math.atan2(dy, dx);
+                ctx.beginPath();
+                ctx.moveTo(currentX, currentY);
+                ctx.lineTo(currentX - 10 * Math.cos(angle - Math.PI / 6), currentY - 10 * Math.sin(angle - Math.PI / 6));
+                ctx.lineTo(currentX - 10 * Math.cos(angle + Math.PI / 6), currentY - 10 * Math.sin(angle + Math.PI / 6));
+                ctx.fillStyle = customColor;
+                ctx.fill();
+            }
+
+            if (progress > 0.5) {
+                ctx.font = highlight ? 'bold 13px sans-serif' : '13px sans-serif';
+                ctx.fillStyle = customColor;
+                ctx.textAlign = 'center';
+
+                if (highlight) {
+                    const metrics = ctx.measureText(text);
+                    ctx.fillStyle = '#fef08a'; // yellow-200
+                    ctx.fillRect(fromX + dx / 2 - metrics.width / 2 - 6, fromY - 20, metrics.width + 12, 18);
+                    ctx.fillStyle = customColor;
+                } else {
+                    // White background for normal text to cover grid lines
+                    const metrics = ctx.measureText(text);
+                    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+                    ctx.fillRect(fromX + dx / 2 - metrics.width / 2 - 2, fromY - 16, metrics.width + 4, 16);
+                    ctx.fillStyle = customColor;
+                }
+
+                ctx.fillText(text, fromX + dx / 2, fromY - 6);
+            }
+            ctx.setLineDash([]);
+        }
+
+        function drawLoopArrow(ctx, x, y, text, progress, customColor = '#ef4444', isDashed = false) {
+            if (progress <= 0) return;
+
+            ctx.beginPath();
+            const radius = 20;
+            const endAngle = Math.PI * 1.5 * progress;
+            ctx.arc(x + radius, y, radius, Math.PI, Math.PI + endAngle);
+
+            ctx.strokeStyle = customColor;
+            ctx.lineWidth = 2;
+            ctx.setLineDash(isDashed ? [5, 5] : []);
+            ctx.stroke();
+
+            if (progress >= 0.95) {
+                ctx.beginPath();
+                const targetX = x + radius;
+                const targetY = y - radius;
+                ctx.moveTo(targetX, targetY);
+                ctx.lineTo(targetX - 8, targetY - 8);
+                ctx.lineTo(targetX + 8, targetY - 8);
+                ctx.fillStyle = customColor;
+                ctx.fill();
+            }
+
+            if (progress > 0.5) {
+                ctx.font = 'bold 13px sans-serif';
+                ctx.fillStyle = customColor;
+                ctx.textAlign = 'left';
+                ctx.fillText(text, x + radius * 2 + 10, y);
+            }
+            ctx.setLineDash([]);
+        }
+
+        // Main render loop
+        function render(timestamp) {
+            if (!lastFrame) lastFrame = timestamp;
+            const delta = timestamp - lastFrame;
+            lastFrame = timestamp;
+
+            if (isPlaying) {
+                animTime += delta / 1000;
+            }
+
+            const { w, h } = setupCanvas();
+            ctx.clearRect(0, 0, w, h);
+
+            // Select active actors based on scenario
+            const activeActorKeys = scenario === 'ERROR_PATH'
+                ? ['user', 'django', 'redis', 'celery_old']
+                : ['user', 'django', 'redis', 'celery_new', 'ai', 'db'];
+
+            const colWidth = w / (activeActorKeys.length + 1);
+            const startY = 65;
+            const actorPositions = {};
+
+            // Draw Actors and Lifelines
+            activeActorKeys.forEach((key, idx) => {
+                const x = colWidth * (idx + 1);
+                actorPositions[key] = x;
+                const actor = ACTORS[key];
+
+                // Header Box
+                ctx.fillStyle = actor.isError ? '#fee2e2' : '#ffffff';
+                ctx.strokeStyle = actor.color;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.roundRect(x - 65, 15, 130, 40, 8);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.font = 'bold 13px sans-serif';
+                ctx.fillStyle = '#1e293b';
+                ctx.textAlign = 'center';
+                ctx.fillText(actor.label, x, 40);
+
+                // Lifeline
+                ctx.beginPath();
+                ctx.moveTo(x, 55);
+                ctx.lineTo(x, h - 20);
+                ctx.strokeStyle = '#cbd5e1';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([6, 6]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            });
+
+            // Error Background
+            if (scenario === 'ERROR_PATH' && animTime > 3.5) {
+                ctx.fillStyle = 'rgba(239, 68, 68, 0.05)';
+                const oldCeleryX = actorPositions['celery_old'];
+                ctx.fillRect(oldCeleryX - 110, 160, w - oldCeleryX + 110, h - 180);
+            }
+
+            // Draw Connection Pipe for SSE / WS if active
+            if ((scenario === 'NORMAL_SSE' || scenario === 'NORMAL_WS') && animTime > 4.5) {
+                const pipeStart = startY + (3 * 42); // Below connection line
+                ctx.save();
+                ctx.globalAlpha = 0.08;
+                let gradient = ctx.createLinearGradient(actorPositions['user'], 0, actorPositions['django'], 0);
+                if (scenario === 'NORMAL_SSE') {
+                    gradient.addColorStop(0, 'rgba(16, 185, 129, 0)');
+                    gradient.addColorStop(1, '#10b981');
+                } else {
+                    gradient.addColorStop(0, '#6366f1');
+                    gradient.addColorStop(1, '#6366f1');
+                }
+                ctx.fillStyle = gradient;
+                ctx.fillRect(actorPositions['user'], pipeStart, actorPositions['django'] - actorPositions['user'], h - pipeStart - 20);
+                ctx.restore();
+            }
+
+            // Draw Messages
+            const messages = SCENARIOS[scenario];
+            const messageSpacing = 42; // slightly tighter vertical spacing to fit more messages
+
+            messages.forEach((msg) => {
+                const msgY = startY + (msg.time * messageSpacing) + 20;
+
+                let progress = 0;
+                if (animTime > msg.time) {
+                    // Draw speed: 0.4s to complete an arrow
+                    progress = Math.min((animTime - msg.time) / 0.4, 1);
+                }
+
+                if (progress > 0) {
+                    const fromX = actorPositions[msg.from];
+                    const toX = actorPositions[msg.to];
+                    const color = msg.color || '#334155';
+
+                    if (msg.type === 'loop') {
+                        drawLoopArrow(ctx, fromX, msgY, msg.text, progress, color, msg.dash);
+                    } else {
+                        drawArrow(ctx, fromX, msgY, toX, msgY, msg.text, progress, msg.type, color, msg.highlight);
+                    }
+                }
+            });
+
+            // Auto loop animation
+            const lastMsg = messages[messages.length - 1];
+            const maxTime = lastMsg.time + 3.5;
+            if (animTime > maxTime) {
+                animTime = 0;
+            }
+
+            reqId = requestAnimationFrame(render);
+        }
+
+        // Initialize
+        setScenario('NORMAL_POLLING');
+        reqId = requestAnimationFrame(render);
+    </script>
+</body>
+
+</html>

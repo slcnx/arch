@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Celery Producer-Consumer 调度时序图</title>
+    <!-- 引入 Tailwind CSS 以保持原有的样式 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 保持画布内容像素清晰 */
+        canvas {
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body class="bg-slate-100 p-4 md:p-8 min-h-screen flex items-center justify-center">
+
+    <!-- 移除了固定高度 h-[800px]，让内容自然撑开，防止截断 -->
+    <div class="flex flex-col w-full max-w-6xl bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden font-sans">
+        
+        <!-- Header & Controls -->
+        <div class="flex flex-col sm:flex-row justify-between items-center p-4 sm:p-5 border-b border-slate-200 bg-slate-50">
+            <div>
+                <h2 class="text-lg font-bold text-slate-800">Celery Producer-Consumer 调度时序图</h2>
+                <p class="text-sm text-slate-500 mt-0.5">Step 3: 架构边界与物理防御验证</p>
+            </div>
+            
+            <div class="flex gap-2 mt-4 sm:mt-0">
+                <button 
+                    id="btnError"
+                    class="px-4 py-2 rounded-md text-sm font-semibold transition-colors bg-white text-slate-600 border border-slate-300 hover:bg-slate-100"
+                >
+                    🚧 异常路径 (未重启 Worker)
+                </button>
+                <button 
+                    id="btnNormal"
+                    class="px-4 py-2 rounded-md text-sm font-semibold transition-colors bg-emerald-500 text-white shadow-md"
+                >
+                    ✅ 正常路径 (新版代码已挂载)
+                </button>
+                <button 
+                    id="btnPlayPause"
+                    class="px-3 py-2 rounded-md text-sm bg-slate-800 text-white hover:bg-slate-700 transition-colors flex items-center justify-center w-10"
+                    title="暂停动画"
+                >
+                    ||
+                </button>
+            </div>
+        </div>
+
+        <!-- Canvas Container: 设定一个固定的绘制高度，确保动画有足够空间 -->
+        <div class="w-full relative bg-slate-50/50 h-[650px]" id="canvasContainer">
+            <canvas id="appCanvas" class="w-full h-full block cursor-crosshair"></canvas>
+        </div>
+        
+        <!-- Helper text panel: 改为底部独立面板，自动适应多行文本，永不截断 -->
+        <div class="w-full p-5 bg-slate-50 border-t border-slate-200 flex gap-3">
+            <div class="text-xl mt-0.5">💡</div>
+            <div>
+                <p class="font-bold text-slate-800 mb-1.5">物理定律应用：时间与调度</p>
+                <div id="textError" class="text-sm text-slate-600 leading-relaxed" style="display: none;">
+                    由于 Celery Worker 作为持久化常驻进程在启动时将代码加载到内存中，当 Django 推送了新的任务签名（如 <code class="bg-slate-200/70 px-1.5 py-0.5 rounded text-red-600 font-mono">ai_decompose_task</code>），而 Worker 尚未执行 <code class="bg-slate-200/70 px-1.5 py-0.5 rounded text-slate-800 font-mono">celery -A proj worker restart</code> 时，必然引发 KeyError 导致任务丢失。
+                </div>
+                <div id="textNormal" class="text-sm text-slate-600 leading-relaxed">
+                    AI 请求属于 CPU/网络密集型阻塞操作。使用 Celery 从 Django 主事件循环中剥离，确保网关可以立即返回 202 状态码，防止前端长连接超时触发 504 Gateway Timeout。
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const SYSTEM_ACTORS = {
+            user: { id: 'user', label: '前端 / 用户', color: '#6366f1' },       // Indigo
+            django: { id: 'django', label: 'Django 视图', color: '#10b981' },   // Emerald
+            redis: { id: 'redis', label: 'Redis 队列', color: '#ef4444' },      // Red
+            celery_old: { id: 'celery_old', label: '未重启的 Worker', color: '#f59e0b', isError: true }, // Amber
+            celery_new: { id: 'celery_new', label: '新版 Worker', color: '#3b82f6' }, // Blue
+            ai: { id: 'ai', label: 'AI 服务 (LLM)', color: '#8b5cf6' },        // Violet
+            db: { id: 'db', label: 'PostgreSQL', color: '#64748b' },           // Slate
+        };
+
+        const SCENARIOS = {
+            ERROR_PATH: [
+                { from: 'user', to: 'django', text: '请求拆解任务 (API)', type: 'solid', time: 0 },
+                { from: 'django', to: 'redis', text: "推送 'ai_decompose_task' 指令", type: 'solid', time: 1 },
+                { from: 'django', to: 'user', text: '返回 202 (任务已启动)', type: 'dashed', time: 2 },
+                { from: 'redis', to: 'celery_old', text: '旧 Worker 捞取任务', type: 'solid', time: 3 },
+                { from: 'celery_old', to: 'celery_old', text: '查找内存字典... 找不到该任务!', type: 'loop', time: 4, color: '#ef4444' },
+                { from: 'celery_old', to: 'celery_old', text: '抛出 KeyError / 任务丢弃', type: 'loop', time: 5, color: '#ef4444', dash: true },
+            ],
+            NORMAL_PATH: [
+                { from: 'user', to: 'django', text: '请求拆解任务 (API)', type: 'solid', time: 0 },
+                { from: 'django', to: 'redis', text: "推送 'ai_decompose_task' 指令", type: 'solid', time: 1 },
+                { from: 'django', to: 'user', text: '返回 202 (任务已启动)', type: 'dashed', time: 2 },
+                { from: 'redis', to: 'celery_new', text: '新 Worker 捞取任务', type: 'solid', time: 3 },
+                { from: 'celery_new', to: 'db', text: '查询原任务详情', type: 'solid', time: 4 },
+                { from: 'db', to: 'celery_new', text: '返回任务数据', type: 'dashed', time: 5 },
+                { from: 'celery_new', to: 'ai', text: '发送 Prompt 进行拆解', type: 'solid', time: 6 },
+                { from: 'ai', to: 'celery_new', text: '返回建议子任务 (JSON)', type: 'dashed', time: 7 },
+                { from: 'celery_new', to: 'db', text: '事务: 写入 SubTask & AIRecord', type: 'solid', time: 8, highlight: true },
+                { from: 'celery_new', to: 'user', text: '触发 Webhook 通知前端完成', type: 'solid', time: 9 },
+            ]
+        };
+
+        // State
+        let scenario = 'NORMAL_PATH';
+        let isPlaying = true;
+        let animTime = 0;
+        let lastFrame = 0;
+        let reqId;
+
+        // DOM Elements
+        const canvas = document.getElementById('appCanvas');
+        const ctx = canvas.getContext('2d');
+        const btnError = document.getElementById('btnError');
+        const btnNormal = document.getElementById('btnNormal');
+        const btnPlayPause = document.getElementById('btnPlayPause');
+        const textError = document.getElementById('textError');
+        const textNormal = document.getElementById('textNormal');
+
+        // Setup Buttons
+        function updateUI() {
+            if (scenario === 'ERROR_PATH') {
+                btnError.className = "px-4 py-2 rounded-md text-sm font-semibold transition-colors bg-red-500 text-white shadow-md";
+                btnNormal.className = "px-4 py-2 rounded-md text-sm font-semibold transition-colors bg-white text-slate-600 border border-slate-300 hover:bg-slate-100";
+                textError.style.display = 'block';
+                textNormal.style.display = 'none';
+            } else {
+                btnError.className = "px-4 py-2 rounded-md text-sm font-semibold transition-colors bg-white text-slate-600 border border-slate-300 hover:bg-slate-100";
+                btnNormal.className = "px-4 py-2 rounded-md text-sm font-semibold transition-colors bg-emerald-500 text-white shadow-md";
+                textError.style.display = 'none';
+                textNormal.style.display = 'block';
+            }
+            
+            btnPlayPause.innerHTML = isPlaying ? '||' : '▶';
+            btnPlayPause.title = isPlaying ? "暂停动画" : "播放动画";
+        }
+
+        btnError.addEventListener('click', () => {
+            scenario = 'ERROR_PATH';
+            animTime = 0;
+            updateUI();
+        });
+
+        btnNormal.addEventListener('click', () => {
+            scenario = 'NORMAL_PATH';
+            animTime = 0;
+            updateUI();
+        });
+
+        btnPlayPause.addEventListener('click', () => {
+            isPlaying = !isPlaying;
+            updateUI();
+        });
+
+        // Canvas Setup for High DPI
+        function setupCanvas() {
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.parentElement.getBoundingClientRect();
+            
+            // Only update if size changed
+            if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
+                canvas.width = rect.width * dpr;
+                canvas.height = rect.height * dpr;
+            }
+            
+            ctx.resetTransform();
+            ctx.scale(dpr, dpr);
+            return { w: rect.width, h: rect.height };
+        }
+
+        // Drawing Functions
+        function drawArrow(ctx, fromX, fromY, toX, toY, text, progress, type = 'solid', customColor = '#334155', highlight = false) {
+            if (progress <= 0) return;
+            
+            const dx = toX - fromX;
+            const dy = toY - fromY;
+            const currentX = fromX + dx * progress;
+            const currentY = fromY + dy * Math.min(progress, 1);
+            
+            ctx.beginPath();
+            ctx.moveTo(fromX, fromY);
+            ctx.lineTo(currentX, currentY);
+            
+            ctx.strokeStyle = customColor;
+            ctx.lineWidth = highlight ? 3 : 2;
+            ctx.setLineDash(type === 'dashed' ? [5, 5] : []);
+            ctx.stroke();
+
+            // Draw arrowhead
+            if (progress >= 0.95) {
+                const angle = Math.atan2(dy, dx);
+                ctx.beginPath();
+                ctx.moveTo(currentX, currentY);
+                ctx.lineTo(currentX - 10 * Math.cos(angle - Math.PI / 6), currentY - 10 * Math.sin(angle - Math.PI / 6));
+                ctx.lineTo(currentX - 10 * Math.cos(angle + Math.PI / 6), currentY - 10 * Math.sin(angle + Math.PI / 6));
+                ctx.fillStyle = customColor;
+                ctx.fill();
+            }
+
+            // Draw text
+            if (progress > 0.5) {
+                ctx.font = highlight ? 'bold 13px sans-serif' : '13px sans-serif';
+                ctx.fillStyle = customColor;
+                ctx.textAlign = 'center';
+                
+                // Highlight background
+                if (highlight) {
+                    const metrics = ctx.measureText(text);
+                    ctx.fillStyle = '#fef08a'; // yellow-200
+                    ctx.fillRect(fromX + dx/2 - 5, fromY - 20, metrics.width + 10, 18);
+                    ctx.fillStyle = customColor;
+                }
+                
+                ctx.fillText(text, fromX + dx / 2, fromY - 8);
+            }
+            ctx.setLineDash([]); // Reset
+        }
+
+        function drawLoopArrow(ctx, x, y, text, progress, customColor = '#ef4444', isDashed = false) {
+            if (progress <= 0) return;
+            
+            ctx.beginPath();
+            const radius = 20;
+            const endAngle = Math.PI * 1.5 * progress;
+            ctx.arc(x + radius, y, radius, Math.PI, Math.PI + endAngle);
+            
+            ctx.strokeStyle = customColor;
+            ctx.lineWidth = 2;
+            ctx.setLineDash(isDashed ? [5, 5] : []);
+            ctx.stroke();
+
+            // Arrow head
+            if (progress >= 0.95) {
+                ctx.beginPath();
+                const targetX = x + radius;
+                const targetY = y - radius;
+                ctx.moveTo(targetX, targetY);
+                ctx.lineTo(targetX - 8, targetY - 8);
+                ctx.lineTo(targetX + 8, targetY - 8);
+                ctx.fillStyle = customColor;
+                ctx.fill();
+            }
+
+            if (progress > 0.5) {
+                ctx.font = 'bold 13px sans-serif';
+                ctx.fillStyle = customColor;
+                ctx.textAlign = 'left';
+                ctx.fillText(text, x + radius * 2 + 10, y);
+            }
+            ctx.setLineDash([]);
+        }
+
+        // Render Loop
+        function render(timestamp) {
+            if (!lastFrame) lastFrame = timestamp;
+            const delta = timestamp - lastFrame;
+            lastFrame = timestamp;
+
+            if (isPlaying) {
+                animTime += delta / 1000; // convert to seconds
+            }
+
+            const { w, h } = setupCanvas();
+            ctx.clearRect(0, 0, w, h);
+
+            // Determine active actors
+            const activeActorKeys = scenario === 'NORMAL_PATH' 
+                ? ['user', 'django', 'redis', 'celery_new', 'ai', 'db']
+                : ['user', 'django', 'redis', 'celery_old'];
+            
+            const colWidth = w / (activeActorKeys.length + 1);
+            const startY = 80;
+            const actorPositions = {};
+
+            // Draw Actors
+            activeActorKeys.forEach((key, idx) => {
+                const x = colWidth * (idx + 1);
+                actorPositions[key] = x;
+                const actor = SYSTEM_ACTORS[key];
+
+                // Header Box
+                ctx.fillStyle = actor.isError ? '#fee2e2' : '#f8fafc';
+                ctx.strokeStyle = actor.color;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.roundRect(x - 60, 20, 120, 40, 8);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.font = 'bold 14px sans-serif';
+                ctx.fillStyle = '#0f172a';
+                ctx.textAlign = 'center';
+                ctx.fillText(actor.label, x, 45);
+
+                // Lifeline
+                ctx.beginPath();
+                ctx.moveTo(x, 60);
+                ctx.lineTo(x, h - 20);
+                ctx.strokeStyle = '#cbd5e1';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([8, 8]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            });
+
+            // Error Background Highlight
+            if (scenario === 'ERROR_PATH' && animTime > 3) {
+                ctx.fillStyle = 'rgba(239, 68, 68, 0.05)';
+                const oldCeleryX = actorPositions['celery_old'];
+                ctx.fillRect(oldCeleryX - 100, 180, w - oldCeleryX + 100, h - 200);
+            }
+            
+            // Draw Messages
+            const messages = SCENARIOS[scenario];
+            const messageSpacing = 50;
+            
+            messages.forEach((msg, idx) => {
+                const msgY = startY + (idx + 1) * messageSpacing;
+                const startTime = msg.time * 1.5; // 1.5s per message
+                
+                let progress = 0;
+                if (animTime > startTime) {
+                    progress = Math.min((animTime - startTime) * 2, 1); // 0.5s to draw
+                }
+
+                if (progress > 0) {
+                    const fromX = actorPositions[msg.from];
+                    const toX = actorPositions[msg.to];
+                    
+                    if (msg.type === 'loop') {
+                        drawLoopArrow(ctx, fromX, msgY, msg.text, progress, msg.color, msg.dash);
+                    } else {
+                        drawArrow(ctx, fromX, msgY, toX, msgY, msg.text, progress, msg.type, msg.color, msg.highlight);
+                    }
+                }
+            });
+
+            // Loop animation
+            const maxTime = messages[messages.length - 1].time * 1.5 + 4;
+            if (animTime > maxTime) {
+                animTime = 0;
+            }
+
+            reqId = requestAnimationFrame(render);
+        }
+
+        // Start
+        updateUI();
+        reqId = requestAnimationFrame(render);
+    </script>
+</body>
+</html>

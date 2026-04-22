@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>前后端异步通信机制对比</title>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        canvas {
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+
+<body class="bg-slate-100 p-4 md:p-8 min-h-screen flex items-center justify-center">
+
+    <div
+        class="flex flex-col w-full max-w-5xl bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden font-sans">
+
+        <!-- Header & Controls -->
+        <div
+            class="flex flex-col sm:flex-row justify-between items-center p-4 sm:p-5 border-b border-slate-200 bg-slate-50">
+            <div>
+                <h2 class="text-lg font-bold text-slate-800">前后端异步通信机制</h2>
+                <p class="text-sm text-slate-500 mt-0.5">如何让后端主动把数据告诉前端？</p>
+            </div>
+
+            <div class="flex gap-2 mt-4 sm:mt-0 flex-wrap justify-center">
+                <button id="btnPolling"
+                    class="px-4 py-2 rounded-md text-sm font-semibold transition-colors bg-blue-500 text-white shadow-md">
+                    1. 短轮询 (Polling)
+                </button>
+                <button id="btnSSE"
+                    class="px-4 py-2 rounded-md text-sm font-semibold transition-colors bg-white text-slate-600 border border-slate-300 hover:bg-slate-100">
+                    2. Server-Sent Events (SSE)
+                </button>
+                <button id="btnWS"
+                    class="px-4 py-2 rounded-md text-sm font-semibold transition-colors bg-white text-slate-600 border border-slate-300 hover:bg-slate-100">
+                    3. WebSocket
+                </button>
+                <button id="btnPlayPause"
+                    class="px-3 py-2 rounded-md text-sm bg-slate-800 text-white hover:bg-slate-700 transition-colors flex items-center justify-center w-10 ml-2"
+                    title="暂停动画">
+                    ||
+                </button>
+            </div>
+        </div>
+
+        <!-- Canvas Container -->
+        <div class="w-full relative bg-slate-50/50 h-[600px]" id="canvasContainer">
+            <canvas id="appCanvas" class="w-full h-full block cursor-crosshair"></canvas>
+        </div>
+
+        <!-- Helper text panel (Dynamic) -->
+        <div class="w-full p-5 bg-slate-50 border-t border-slate-200 flex gap-3 h-[180px] overflow-y-auto">
+            <div class="text-xl mt-0.5" id="iconPanel">🔄</div>
+            <div>
+                <p class="font-bold text-slate-800 mb-1.5" id="titlePanel">传统轮询 (Short Polling)</p>
+
+                <!-- Polling Text -->
+                <div id="textPolling" class="text-sm text-slate-600 leading-relaxed">
+                    <p><strong>原理：</strong>前端写一个定时器，每隔几秒钟就主动向后端发送一次 HTTP 请求，询问“我的任务做完了吗？”。后端如果没做完就返回“没有”，做完了就返回真实数据。</p>
+                    <p class="mt-1 text-orange-600"><strong>缺点：</strong>极度浪费带宽和服务器资源。绝大多数请求都是无效的“空轮询”，且每次请求都要携带完整的 HTTP
+                        请求头（Cookies 等）。延迟高，取决于轮询间隔。</p>
+                </div>
+
+                <!-- SSE Text -->
+                <div id="textSSE" class="text-sm text-slate-600 leading-relaxed" style="display: none;">
+                    <p><strong>原理：</strong>基于原生 HTTP 协议。前端发起一次请求，后端把响应头设为 <code
+                            class="bg-slate-200 px-1 rounded text-slate-800">text/event-stream</code>
+                        并且不关闭这个连接。随后后端可以源源不断地向前端单向“推送”文本数据。</p>
+                    <p class="mt-1 text-emerald-600"><strong>优点：</strong>轻量级、浏览器原生支持（EventSource API）、自动重连。完美契合 ChatGPT
+                        打字机效果、单向系统通知、任务进度下发等场景。不需要 WebSocket 那么重的基建。</p>
+                </div>
+
+                <!-- WebSocket Text -->
+                <div id="textWS" class="text-sm text-slate-600 leading-relaxed" style="display: none;">
+                    <p><strong>原理：</strong>前端发起一个 HTTP Upgrade 请求与后端握手，将协议升级为 WebSocket。成功后，建立起一条持久的 <strong>TCP
+                            全双工双向连接</strong>。</p>
+                    <p class="mt-1 text-indigo-600">
+                        <strong>特点：</strong>前端和后端地位完全平等，任何一方都可以随时主动向对方发送数据。消息极其轻量（只有几个字节的帧头）。适用于高频双向互动的场景（如：在线聊天室、多人游戏、协同文档）。
+                    </p>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const ACTORS = {
+            client: { id: 'client', label: '前端 (Browser)', color: '#6366f1' },   // Indigo
+            server: { id: 'server', label: '后端 (Server)', color: '#10b981' },   // Emerald
+        };
+
+        const SCENARIOS = {
+            POLLING: [
+                { from: 'client', to: 'server', text: 'GET /api/status (有结果吗?)', time: 0 },
+                { from: 'server', to: 'client', text: '200 OK (没有, 还在处理)', time: 1, type: 'dashed' },
+                { from: 'client', to: 'server', text: 'GET /api/status (有结果吗?)', time: 2.5 },
+                { from: 'server', to: 'client', text: '200 OK (没有, 还在处理)', time: 3.5, type: 'dashed' },
+                { from: 'client', to: 'server', text: 'GET /api/status (有结果吗?)', time: 5 },
+                { from: 'server', to: 'client', text: '200 OK (任务完成! 数据: {...})', time: 6, type: 'solid', highlight: true },
+            ],
+            SSE: [
+                { from: 'client', to: 'server', text: 'GET /api/events (订阅消息)', time: 0 },
+                { from: 'server', to: 'client', text: '200 OK (Content-Type: text/event-stream)', time: 1, type: 'dashed' },
+                { from: 'server', to: 'client', text: 'data: {"status": "started"}\n\n', time: 3, type: 'solid', customColor: '#10b981' },
+                { from: 'server', to: 'client', text: 'data: {"progress": "50%"}\n\n', time: 4.5, type: 'solid', customColor: '#10b981' },
+                { from: 'server', to: 'client', text: 'data: {"status": "done"}\n\n', time: 6, type: 'solid', customColor: '#10b981', highlight: true },
+            ],
+            WEBSOCKET: [
+                { from: 'client', to: 'server', text: 'GET /ws (Upgrade: websocket)', time: 0 },
+                { from: 'server', to: 'client', text: '101 Switching Protocols', time: 1, type: 'dashed' },
+                { from: 'client', to: 'server', text: 'Send: 开始执行复杂分析', time: 2.5, type: 'solid', customColor: '#6366f1' },
+                { from: 'server', to: 'client', text: 'Push: 收到指令，正在解析', time: 3.5, type: 'solid', customColor: '#10b981' },
+                { from: 'server', to: 'client', text: 'Push: 发现关联节点 12 处', time: 5, type: 'solid', customColor: '#10b981' },
+                { from: 'client', to: 'server', text: 'Send: 忽略第 5 处，继续', time: 6.5, type: 'solid', customColor: '#6366f1' },
+                { from: 'server', to: 'client', text: 'Push: 任务全部完成', time: 8, type: 'solid', customColor: '#10b981', highlight: true },
+            ]
+        };
+
+        // State
+        let scenario = 'POLLING';
+        let isPlaying = true;
+        let animTime = 0;
+        let lastFrame = 0;
+        let reqId;
+
+        // DOM
+        const canvas = document.getElementById('appCanvas');
+        const ctx = canvas.getContext('2d');
+        const btns = {
+            POLLING: document.getElementById('btnPolling'),
+            SSE: document.getElementById('btnSSE'),
+            WEBSOCKET: document.getElementById('btnWS')
+        };
+        const btnPlayPause = document.getElementById('btnPlayPause');
+
+        const texts = {
+            POLLING: document.getElementById('textPolling'),
+            SSE: document.getElementById('textSSE'),
+            WEBSOCKET: document.getElementById('textWS')
+        };
+        const titlePanel = document.getElementById('titlePanel');
+        const iconPanel = document.getElementById('iconPanel');
+
+        function updateUI() {
+            // Update Buttons
+            Object.keys(btns).forEach(key => {
+                if (key === scenario) {
+                    let bgClass = key === 'POLLING' ? 'bg-blue-500' : (key === 'SSE' ? 'bg-emerald-500' : 'bg-indigo-500');
+                    btns[key].className = `px-4 py-2 rounded-md text-sm font-semibold transition-colors ${bgClass} text-white shadow-md`;
+                } else {
+                    btns[key].className = "px-4 py-2 rounded-md text-sm font-semibold transition-colors bg-white text-slate-600 border border-slate-300 hover:bg-slate-100";
+                }
+            });
+
+            // Update Text Panel
+            Object.keys(texts).forEach(key => {
+                texts[key].style.display = key === scenario ? 'block' : 'none';
+            });
+
+            // Update Title/Icon
+            if (scenario === 'POLLING') { titlePanel.innerText = '传统轮询 (Short Polling)'; iconPanel.innerText = '🔄'; }
+            if (scenario === 'SSE') { titlePanel.innerText = '单向长连接 (Server-Sent Events)'; iconPanel.innerText = '🌊'; }
+            if (scenario === 'WEBSOCKET') { titlePanel.innerText = '全双工双向通信 (WebSocket)'; iconPanel.innerText = '⚡'; }
+
+            // Play/Pause button
+            btnPlayPause.innerHTML = isPlaying ? '||' : '▶';
+            btnPlayPause.title = isPlaying ? "暂停动画" : "播放动画";
+        }
+
+        Object.keys(btns).forEach(key => {
+            btns[key].addEventListener('click', () => {
+                scenario = key;
+                animTime = 0;
+                updateUI();
+            });
+        });
+
+        btnPlayPause.addEventListener('click', () => {
+            isPlaying = !isPlaying;
+            updateUI();
+        });
+
+        // Canvas Utils
+        function setupCanvas() {
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.parentElement.getBoundingClientRect();
+            if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
+                canvas.width = rect.width * dpr;
+                canvas.height = rect.height * dpr;
+            }
+            ctx.resetTransform();
+            ctx.scale(dpr, dpr);
+            return { w: rect.width, h: rect.height };
+        }
+
+        function drawPipe(ctx, clientX, serverX, startY, h, progress, type) {
+            if (progress <= 0) return;
+
+            ctx.save();
+            ctx.globalAlpha = Math.min(progress, 1) * 0.15; // fade in effect
+
+            let gradient;
+            if (type === 'SSE') {
+                // Gradient pointing from server to client
+                gradient = ctx.createLinearGradient(serverX, 0, clientX, 0);
+                gradient.addColorStop(0, '#10b981'); // server green
+                gradient.addColorStop(1, 'rgba(16, 185, 129, 0)'); // fade out
+            } else if (type === 'WEBSOCKET') {
+                // Bidirectional pipe
+                gradient = ctx.createLinearGradient(clientX, 0, serverX, 0);
+                gradient.addColorStop(0, '#6366f1'); // client indigo
+                gradient.addColorStop(0.5, '#3b82f6'); // mid blue
+                gradient.addColorStop(1, '#10b981'); // server green
+            }
+
+            ctx.fillStyle = gradient;
+            ctx.fillRect(clientX, startY, serverX - clientX, h - startY - 20);
+
+            // Draw pipe borders
+            ctx.globalAlpha = Math.min(progress, 1) * 0.5;
+            ctx.strokeStyle = type === 'SSE' ? '#10b981' : '#6366f1';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(clientX, startY);
+            ctx.lineTo(clientX, h - 20);
+            ctx.moveTo(serverX, startY);
+            ctx.lineTo(serverX, h - 20);
+            ctx.stroke();
+
+            // Text tag for connection
+            ctx.globalAlpha = Math.min(progress, 1);
+            ctx.fillStyle = type === 'SSE' ? '#10b981' : '#4f46e5';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            let pipeText = type === 'SSE' ? 'SSE 单向数据流 (保持连接)' : 'WebSocket TCP 长连接 (全双工)';
+            ctx.fillText(pipeText, clientX + (serverX - clientX) / 2, startY + 20);
+
+            ctx.restore();
+        }
+
+        function drawArrow(ctx, fromX, fromY, toX, toY, text, progress, type = 'solid', customColor = '#334155', highlight = false) {
+            if (progress <= 0) return;
+
+            const dx = toX - fromX;
+            const dy = toY - fromY;
+            const currentX = fromX + dx * Math.min(progress, 1);
+            const currentY = fromY + dy * Math.min(progress, 1);
+
+            ctx.beginPath();
+            ctx.moveTo(fromX, fromY);
+            ctx.lineTo(currentX, currentY);
+
+            ctx.strokeStyle = customColor;
+            ctx.lineWidth = highlight ? 3 : 2;
+            ctx.setLineDash(type === 'dashed' ? [5, 5] : []);
+            ctx.stroke();
+
+            // Arrowhead
+            if (progress >= 0.95) {
+                const angle = Math.atan2(dy, dx);
+                ctx.beginPath();
+                ctx.moveTo(currentX, currentY);
+                ctx.lineTo(currentX - 10 * Math.cos(angle - Math.PI / 6), currentY - 10 * Math.sin(angle - Math.PI / 6));
+                ctx.lineTo(currentX - 10 * Math.cos(angle + Math.PI / 6), currentY - 10 * Math.sin(angle + Math.PI / 6));
+                ctx.fillStyle = customColor;
+                ctx.fill();
+            }
+
+            // Text
+            if (progress > 0.5) {
+                ctx.font = highlight ? 'bold 13px sans-serif' : '13px sans-serif';
+                ctx.fillStyle = customColor;
+                ctx.textAlign = 'center';
+
+                if (highlight) {
+                    const metrics = ctx.measureText(text);
+                    ctx.fillStyle = '#fef08a';
+                    ctx.fillRect(fromX + dx / 2 - metrics.width / 2 - 6, fromY - 20, metrics.width + 12, 18);
+                    ctx.fillStyle = customColor;
+                }
+
+                ctx.fillText(text, fromX + dx / 2, fromY - 8);
+            }
+            ctx.setLineDash([]);
+        }
+
+        function render(timestamp) {
+            if (!lastFrame) lastFrame = timestamp;
+            const delta = timestamp - lastFrame;
+            lastFrame = timestamp;
+
+            if (isPlaying) {
+                animTime += delta / 1000;
+            }
+
+            const { w, h } = setupCanvas();
+            ctx.clearRect(0, 0, w, h);
+
+            const startY = 80;
+            const clientX = w * 0.25;
+            const serverX = w * 0.75;
+            const actorPositions = { 'client': clientX, 'server': serverX };
+
+            // Draw Actors
+            ['client', 'server'].forEach((key) => {
+                const x = actorPositions[key];
+                const actor = ACTORS[key];
+
+                // Box
+                ctx.fillStyle = '#f8fafc';
+                ctx.strokeStyle = actor.color;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.roundRect(x - 70, 20, 140, 40, 8);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.font = 'bold 14px sans-serif';
+                ctx.fillStyle = '#0f172a';
+                ctx.textAlign = 'center';
+                ctx.fillText(actor.label, x, 45);
+
+                // Lifeline
+                ctx.beginPath();
+                ctx.moveTo(x, 60);
+                ctx.lineTo(x, h - 20);
+                ctx.strokeStyle = '#cbd5e1';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([8, 8]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            });
+
+            // Draw Persistent Pipe for SSE and WS
+            const handshakeTime = 1.8; // Time when handshake finishes
+            if ((scenario === 'SSE' || scenario === 'WEBSOCKET') && animTime > handshakeTime) {
+                const pipeProgress = animTime - handshakeTime;
+                const pipeStartY = startY + 1.5 * 45 + 10; // Below the handshake messages
+                drawPipe(ctx, clientX, serverX, pipeStartY, h, pipeProgress, scenario);
+            }
+
+            // Draw Messages
+            const messages = SCENARIOS[scenario];
+            const messageSpacing = 45;
+
+            messages.forEach((msg, idx) => {
+                const msgY = startY + (idx + 1) * messageSpacing + (msg.time * 20); // Time dictates Y offset slightly too
+                const startTime = msg.time;
+
+                let progress = 0;
+                if (animTime > startTime) {
+                    progress = Math.min((animTime - startTime) * 3, 1); // 0.33s to draw line
+                }
+
+                if (progress > 0) {
+                    const fromX = actorPositions[msg.from];
+                    const toX = actorPositions[msg.to];
+                    const color = msg.customColor || '#334155';
+                    drawArrow(ctx, fromX, msgY, toX, msgY, msg.text, progress, msg.type, color, msg.highlight);
+                }
+            });
+
+            // Loop animation
+            const maxTime = messages[messages.length - 1].time + 3;
+            if (animTime > maxTime) {
+                animTime = 0;
+            }
+
+            reqId = requestAnimationFrame(render);
+        }
+
+        // Init
+        updateUI();
+        reqId = requestAnimationFrame(render);
+    </script>
+</body>
+
+</html>
