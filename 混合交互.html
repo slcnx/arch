@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>云端大脑 + 灵活执行 (MCP 架构蓝图)</title>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --speed: 1500ms;
+        }
+
+        body {
+            background-color: #ffffff;
+        }
+
+        @keyframes packetForward {
+            0% {
+                left: 0%;
+                opacity: 0;
+                transform: translateY(-50%) scale(0.5);
+            }
+
+            10% {
+                opacity: 1;
+                transform: translateY(-50%) scale(1.2);
+            }
+
+            90% {
+                opacity: 1;
+                transform: translateY(-50%) scale(1.2);
+            }
+
+            100% {
+                left: calc(100% - 8px);
+                opacity: 0;
+                transform: translateY(-50%) scale(0.5);
+            }
+        }
+
+        @keyframes packetBackward {
+            0% {
+                right: 0%;
+                opacity: 0;
+                transform: translateY(-50%) scale(0.5);
+            }
+
+            10% {
+                opacity: 1;
+                transform: translateY(-50%) scale(1.2);
+            }
+
+            90% {
+                opacity: 1;
+                transform: translateY(-50%) scale(1.2);
+            }
+
+            100% {
+                right: calc(100% - 8px);
+                opacity: 0;
+                transform: translateY(-50%) scale(0.5);
+            }
+        }
+
+        .packet-forward {
+            animation: packetForward var(--speed) ease-in-out infinite;
+        }
+
+        .packet-backward {
+            animation: packetBackward var(--speed) ease-in-out infinite;
+        }
+
+        .flowing-dash-forward {
+            background-image: linear-gradient(to right, #3b82f6 50%, transparent 50%);
+            background-size: 16px 2px;
+            background-position: 0 0;
+            animation: dashFlowForward 0.8s linear infinite;
+        }
+
+        .flowing-dash-backward {
+            background-image: linear-gradient(to left, #a855f7 50%, transparent 50%);
+            background-size: 16px 2px;
+            background-position: 0 0;
+            animation: dashFlowBackward 0.8s linear infinite;
+        }
+
+        @keyframes dashFlowForward {
+            to {
+                background-position: -16px 0;
+            }
+        }
+
+        @keyframes dashFlowBackward {
+            to {
+                background-position: 16px 0;
+            }
+        }
+    </style>
+</head>
+
+<body class="text-slate-800 font-sans min-h-screen p-6">
+
+    <div class="max-w-6xl mx-auto flex flex-col h-full bg-white rounded-xl">
+
+        <!-- Header Info -->
+        <div
+            class="mb-6 bg-white rounded-xl p-6 shadow-sm border border-slate-200 flex flex-col md:flex-row gap-6 justify-between items-center">
+            <div>
+                <h1
+                    class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-purple-600 mb-2">
+                    云端大脑 + 灵活执行 (MCP 架构蓝图)
+                </h1>
+                <p class="text-sm text-slate-500 mb-3">
+                    核心逻辑：云端 LLM 负责决策，Tauri UI 负责调度。工具根据配置在本地或服务端执行。
+                </p>
+
+                <!-- 模式切换按钮组 -->
+                <div class="flex items-center gap-2">
+                    <button data-mode="hybrid"
+                        class="mode-btn px-4 py-1.5 rounded-md text-sm font-medium transition-colors bg-blue-600 text-white shadow-sm border border-blue-600">
+                        双端联动 (云+本地工具)
+                    </button>
+                    <button data-mode="local"
+                        class="mode-btn px-4 py-1.5 rounded-md text-sm font-medium transition-colors bg-slate-100 text-slate-600 hover:bg-slate-200 border border-transparent">
+                        本地赋能 (仅本地工具)
+                    </button>
+                    <button data-mode="remote"
+                        class="mode-btn px-4 py-1.5 rounded-md text-sm font-medium transition-colors bg-slate-100 text-slate-600 hover:bg-slate-200 border border-transparent">
+                        云端闭环 (仅服务端工具)
+                    </button>
+                </div>
+            </div>
+
+            <!-- Controls -->
+            <div class="flex items-center gap-3 bg-slate-100 p-2 rounded-lg border border-slate-200">
+                <button id="btn-reset" class="p-2 hover:bg-white rounded shadow-sm text-slate-600 transition"
+                    title="重置">
+                    <i data-lucide="rotate-ccw" class="w-[18px] h-[18px]"></i>
+                </button>
+                <div class="w-px h-6 bg-slate-300 mx-1"></div>
+                <button id="btn-prev" class="p-2 hover:bg-white disabled:opacity-30 rounded shadow-sm transition">
+                    <i data-lucide="chevron-left" class="w-[18px] h-[18px]"></i>
+                </button>
+                <button id="btn-play"
+                    class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded shadow transition flex items-center gap-2 font-medium w-24 justify-center">
+                    <span id="play-icon-container"><i data-lucide="play" class="w-[18px] h-[18px]"></i></span>
+                    <span id="play-text">播放</span>
+                </button>
+                <button id="btn-next" class="p-2 hover:bg-white disabled:opacity-30 rounded shadow-sm transition">
+                    <i data-lucide="chevron-right" class="w-[18px] h-[18px]"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Main Diagram Area -->
+        <div class="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
+
+            <!-- Environment Zones -->
+            <div class="flex w-full h-8 relative mt-4 px-4">
+                <div
+                    class="w-[60%] flex flex-col justify-center text-center text-xs font-bold text-emerald-600 uppercase tracking-wider relative">
+                    <div class="absolute top-1/2 w-full border-t border-emerald-200"></div>
+                    <span
+                        class="bg-white px-3 relative mx-auto rounded-full border border-emerald-200 transition-opacity duration-500"
+                        id="zone-local">本地环境 (User Machine)</span>
+                </div>
+                <div
+                    class="w-[40%] flex flex-col justify-center text-center text-xs font-bold text-indigo-600 uppercase tracking-wider relative">
+                    <div class="absolute top-1/2 w-full border-t border-indigo-200"></div>
+                    <span
+                        class="bg-white px-3 relative mx-auto rounded-full border border-indigo-200 transition-opacity duration-500"
+                        id="zone-cloud">云端环境 (Remote Server)</span>
+                </div>
+            </div>
+
+            <!-- Entities Header -->
+            <div id="entities-container" class="flex w-full px-4 pt-6 pb-2 relative z-10 bg-white"></div>
+
+            <!-- Sequence Grid -->
+            <div class="relative flex-1 overflow-y-auto px-4 pb-12 w-full min-h-[500px]">
+                <div id="lifelines-container"></div>
+                <div id="steps-container" class="relative pt-4 flex flex-col gap-2"></div>
+            </div>
+        </div>
+
+        <!-- Step Detail Panel -->
+        <div
+            class="mt-6 bg-blue-50 rounded-xl p-5 border border-blue-100 flex gap-4 items-start shadow-sm min-h-[100px]">
+            <div id="detail-step-num"
+                class="bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center font-bold shrink-0 mt-1 transition-all">
+                1
+            </div>
+            <div class="flex-1">
+                <h4 id="detail-title" class="text-lg font-bold text-slate-800 mb-2 transition-all">
+                    加载中...
+                </h4>
+                <p id="detail-desc" class="text-slate-600 leading-relaxed transition-all">
+                    加载中...
+                </p>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const ENTITIES = [
+            { id: 'ui', name: 'Tauri UI (React)', icon: 'laptop', type: 'local', desc: '通信枢纽与调度层' },
+            { id: 'tauri', name: 'Tauri Core (Rust)', icon: 'settings', type: 'local', desc: '进程管理与系统调用' },
+            { id: 'mcp', name: '本地 MCP 服务', icon: 'terminal', type: 'local', desc: '本地工具/脚本执行' },
+            { id: 'django', name: 'Django 后端', icon: 'server', type: 'cloud', desc: '业务中控与云端工具' },
+            { id: 'llm', name: '云端大脑 (LLM)', icon: 'cpu', type: 'cloud', desc: '决策与思考中枢' },
+        ];
+
+        // --- 双端联动 (云+本地工具) ---
+        const STEPS_HYBRID = [
+            { from: 0, to: 3, label: '1. 建立双端心跳连接', detail: 'Tauri UI 与 Django 建立 WebSocket 通道，维持长连接以处理双向推送', isDashed: true },
+            { from: 3, to: 0, label: '2. 获取云端工具列表', detail: 'UI 同步云端预置的工具能力名录', isDashed: true },
+            { from: 1, to: 0, label: '3. 注入本地工具能力', detail: 'UI 通过 Rust 核心读取本地自定义 MCP 工具名录并与云端合并', isDashed: true },
+            { from: 0, to: 1, label: '4. 预激活本地环境', detail: '通知 Tauri Core 拉起本地 MCP 进程管道' },
+            { from: 0, to: 3, label: '5. 发起双端协同对话', detail: 'UI 携带“云+端”的全量工具 Schema 向 Django 发送用户指令' },
+            { from: 3, to: 4, label: '6. 云端大脑决策', detail: 'LLM 根据全量工具能力判断执行方案' },
+            { from: 4, to: 3, label: '7. 生成执行指令', detail: 'LLM 决定调用某个工具，下发 tool_call_request', isDashed: true },
+            { from: 3, to: 0, label: '8. ⚠️ 远程分发任务', detail: 'Django 根据工具属性决定：如果是本地工具，则通过 WS 下发给 Tauri UI 执行' },
+            { from: 0, to: 1, label: '9. 本地系统调度', detail: 'UI 接收指令，通过 invoke 调度 Rust 核心' },
+            { from: 1, to: 2, label: '10. 执行本地任务', detail: '本地 MCP 进程执行具体系统操作（如读写文件、跑脚本）' },
+            { from: 2, to: 1, label: '11. 结果回送核心', detail: 'MCP 进程将数据返回给 Rust 层', isDashed: true },
+            { from: 1, to: 0, label: '12. 结果汇聚 UI', detail: 'Rust 核心将数据透传回 UI 调度层', isDashed: true },
+            { from: 0, to: 3, label: '13. 结果同步云端', detail: 'UI 将执行结果回传给 Django' },
+            { from: 3, to: 4, label: '14. 最终脑力整合', detail: 'LLM 结合执行结果进行后续生成' },
+            { from: 3, to: 0, label: '15. 推送最终回答', detail: 'Django 将回复推送到 UI 渲染' },
+        ];
+
+        // --- 本地赋能 (仅本地工具) ---
+        const STEPS_LOCAL = [
+            { from: 0, to: 3, label: '1. 建立协同连接', detail: '虽然只用本地工具，但大脑在云端，必须建立 WebSocket 监听指令', isDashed: true },
+            { from: 1, to: 0, label: '2. 挂载本地工具集', detail: 'UI 确认本地 mcp.json 配置的工具', isDashed: true },
+            { from: 0, to: 1, label: '3. 拉起本地执行进程', detail: 'Tauri Core 准备就绪，开启 stdio 管道' },
+            { from: 0, to: 3, label: '4. 托管请求至云端', detail: '用户请求发往 Django，但仅附带【本地工具】的能力描述' },
+            { from: 3, to: 4, label: '5. 云端大脑思考', detail: 'LLM 决定如何操作本地系统' },
+            { from: 4, to: 3, label: '6. 下发决策方案', detail: 'LLM 返回调用本地工具的建议', isDashed: true },
+            { from: 3, to: 0, label: '7. ⚠️ 跨端调度执行', detail: 'Django 转发指令给 Tauri UI，触发本地执行流' },
+            { from: 0, to: 1, label: '8. 激活本地核心', detail: 'UI 通过 IPC 调用 Rust 层' },
+            { from: 1, to: 2, label: '9. 运行本地 MCP', detail: '执行本地工具逻辑' },
+            { from: 2, to: 1, label: '10. 捕获执行输出', detail: '获取本地执行后的数据', isDashed: true },
+            { from: 1, to: 0, label: '11. 响应至前端', detail: '数据汇聚到前端调度层', isDashed: true },
+            { from: 0, to: 3, label: '12. 数据回馈大脑', detail: '通过 WS 将本地数据反馈给云端大脑' },
+            { from: 3, to: 0, label: '13. 接收云端结论', detail: '展示大脑结合本地数据后的最终结论' },
+        ];
+
+        // --- 云端闭环 (仅服务端工具) ---
+        const STEPS_REMOTE = [
+            { from: 0, to: 3, label: '1. 初始化通信', detail: '基础的 WebSocket 握手', isDashed: true },
+            { from: 3, to: 0, label: '2. 注入云端全能力', detail: 'Django 告知 UI 仅提供云端 Server 工具', isDashed: true },
+            { from: 0, to: 3, label: '3. 提交任务请求', detail: '发送对话请求，本地环境保持静默' },
+            { from: 3, to: 4, label: '4. 模型内部决策', detail: 'LLM 直接在云端决定调用 Server 工具（如 API、DB）' },
+            { from: 4, to: 3, label: '5. 服务端直接执行', detail: 'Django 内部消化 tool_call，不涉及客户端任何操作', isDashed: true },
+            { from: 3, to: 4, label: '6. 结果二次合成', detail: 'Django 拿到结果直接再次请求 LLM' },
+            { from: 4, to: 3, label: '7. 生成输出结果', detail: '模型生成文本回复', isDashed: true },
+            { from: 3, to: 0, label: '8. 同步至前端', detail: '结果通过长连接直接下发展示' },
+        ];
+
+        let currentMode = 'hybrid';
+        let currentSteps = STEPS_HYBRID;
+        let activeStep = 0;
+        let isPlaying = false;
+        let speed = 1500;
+        let timerRef = null;
+
+        const elements = {
+            entitiesContainer: document.getElementById('entities-container'),
+            lifelinesContainer: document.getElementById('lifelines-container'),
+            stepsContainer: document.getElementById('steps-container'),
+            detailStepNum: document.getElementById('detail-step-num'),
+            detailTitle: document.getElementById('detail-title'),
+            detailDesc: document.getElementById('detail-desc'),
+            btnPrev: document.getElementById('btn-prev'),
+            btnNext: document.getElementById('btn-next'),
+            btnPlay: document.getElementById('btn-play'),
+            btnReset: document.getElementById('btn-reset'),
+            playIconContainer: document.getElementById('play-icon-container'),
+            playText: document.getElementById('play-text'),
+            modeBtns: document.querySelectorAll('.mode-btn'),
+            zoneLocal: document.getElementById('zone-local'),
+            zoneCloud: document.getElementById('zone-cloud')
+        };
+
+        function init() {
+            renderEntities();
+            renderLifelines();
+            updateUI();
+            setupEventListeners();
+            lucide.createIcons();
+        }
+
+        function renderEntities() {
+            elements.entitiesContainer.innerHTML = ENTITIES.map(entity => {
+                const isLocal = entity.type === 'local';
+                const bgClass = isLocal
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
+                    : 'bg-indigo-50 border-indigo-200 text-indigo-600';
+
+                let opacityClass = 'opacity-100 grayscale-0';
+                if (currentMode === 'remote' && entity.type === 'local' && entity.id !== 'ui') {
+                    opacityClass = 'opacity-30 grayscale';
+                }
+
+                return `
+                <div class="w-1/5 flex flex-col items-center transition-all duration-500 ${opacityClass}">
+                    <div class="p-3 rounded-2xl shadow-sm mb-2 border ${bgClass}">
+                        <i data-lucide="${entity.icon}" class="w-[28px] h-[28px]"></i>
+                    </div>
+                    <h3 class="font-semibold text-sm text-center">${entity.name}</h3>
+                    <p class="text-[10px] text-slate-400 text-center mt-1 px-2">${entity.desc}</p>
+                </div>
+            `;
+            }).join('');
+
+            elements.zoneLocal.className = `bg-white px-3 relative mx-auto rounded-full border border-emerald-200 transition-opacity duration-500 ${currentMode === 'remote' ? 'opacity-30 grayscale' : 'opacity-100'}`;
+            elements.zoneCloud.className = `bg-white px-3 relative mx-auto rounded-full border border-indigo-200 transition-opacity duration-500 ${currentMode === 'local' ? 'opacity-30 grayscale' : 'opacity-100'}`;
+
+            lucide.createIcons();
+        }
+
+        function renderLifelines() {
+            elements.lifelinesContainer.innerHTML = ENTITIES.map((_, idx) => {
+                let isGray = false;
+                if (currentMode === 'remote' && (idx === 1 || idx === 2)) isGray = true;
+                return `<div class="absolute top-0 bottom-0 border-l-2 border-slate-200 -z-0 transition-all duration-500 ${isGray ? 'opacity-30' : 'opacity-100'}" style="left: ${(idx * 20) + 10}%"></div>`;
+            }).join('');
+        }
+
+        function renderSteps() {
+            const getLeftPos = (idx) => (idx * 20) + 10;
+            elements.stepsContainer.innerHTML = currentSteps.map((step, index) => {
+                const isActive = index <= activeStep;
+                const isCurrent = index === activeStep;
+                const startLeft = getLeftPos(step.from);
+                const endLeft = getLeftPos(step.to);
+                const isForward = endLeft > startLeft;
+                const left = isForward ? startLeft : endLeft;
+                const width = Math.abs(endLeft - startLeft);
+
+                let labelClass = 'bg-slate-100 text-slate-600';
+                if (isCurrent) {
+                    labelClass = isForward ? 'bg-blue-500 text-white font-bold ring-2 ring-blue-300' : 'bg-purple-500 text-white font-bold ring-2 ring-purple-300';
+                    if (step.label.includes('⚠️')) labelClass = 'bg-orange-500 text-white font-bold ring-2 ring-orange-300';
+                }
+
+                let lineBg = step.isDashed ? 'transparent' : '#94a3b8';
+                if (isCurrent && !step.isDashed) lineBg = step.label.includes('⚠️') ? '#f97316' : (isForward ? '#3b82f6' : '#8b5cf6');
+                const borderTop = (step.isDashed && !isCurrent) ? '2px dashed #94a3b8' : 'none';
+
+                let arrowHeadClass = isForward ? 'border-l-slate-400' : 'border-r-slate-400';
+                if (isCurrent) arrowHeadClass = step.label.includes('⚠️') ? (isForward ? 'border-l-orange-500' : 'border-r-orange-500') : (isForward ? 'border-l-blue-500' : 'border-r-purple-500');
+
+                let dashedFlowHTML = '';
+                let packetHTML = '';
+                if (step.isDashed && isCurrent) {
+                    const dashClass = isForward ? 'flowing-dash-forward' : 'flowing-dash-backward';
+                    dashedFlowHTML = `<div class="w-full h-full absolute top-0 ${dashClass}" style="margin-top: -1px;"></div>`;
+                }
+                if (isCurrent) {
+                    const packetBg = step.label.includes('⚠️') ? 'shadow-[0_0_8px_3px_#f97316]' : (isForward ? 'shadow-[0_0_8px_3px_#3b82f6]' : 'shadow-[0_0_8px_3px_#8b5cf6]');
+                    packetHTML = `<div class="absolute top-1/2 w-2 h-2 rounded-full z-20 ${isForward ? 'packet-forward' : 'packet-backward'} bg-white ${packetBg}"></div>`;
+                }
+
+                return `
+                <div class="relative h-12 flex items-center transition-all duration-500 ${isActive ? 'opacity-100' : 'opacity-20'} ${isCurrent ? 'scale-105 z-10' : 'z-0'}">
+                    <div class="w-full text-xs text-center absolute -top-1 font-medium z-10" style="left: ${left}%; width: ${width}%">
+                        <span class="px-2 py-0.5 rounded shadow-sm transition-colors duration-300 ${labelClass}">${step.label}</span>
+                    </div>
+                    <div class="absolute h-0.5 flex items-center" style="left: ${left}%; width: ${width}%; background: ${lineBg}; border-top: ${borderTop};">
+                        <div class="absolute border-solid border-4 border-transparent ${arrowHeadClass}" style="${isForward ? 'right: -4px;' : 'left: -4px;'} border-top-width: 4px; border-bottom-width: 4px; border-left-width: ${isForward ? '8px' : '0'}; border-right-width: ${isForward ? '0' : '8px'}; z-index: 10;"></div>
+                        ${dashedFlowHTML} ${packetHTML}
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function updateUI() {
+            renderSteps();
+            const currentStep = currentSteps[activeStep];
+            elements.detailStepNum.textContent = activeStep + 1;
+            elements.detailStepNum.className = currentStep.label.includes('⚠️') ? 'bg-orange-500 text-white rounded-full w-8 h-8 flex items-center justify-center font-bold shrink-0 mt-1' : 'bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center font-bold shrink-0 mt-1';
+            elements.detailTitle.textContent = currentStep.label;
+            elements.detailDesc.textContent = currentStep.detail;
+            elements.btnPrev.disabled = activeStep === 0;
+            elements.btnNext.disabled = activeStep === currentSteps.length - 1;
+            elements.playIconContainer.innerHTML = isPlaying ? '<i data-lucide="pause" class="w-[18px] h-[18px]"></i>' : '<i data-lucide="play" class="w-[18px] h-[18px]"></i>';
+            elements.playText.textContent = isPlaying ? '暂停' : '播放';
+            lucide.createIcons();
+        }
+
+        function setMode(mode) {
+            if (currentMode === mode) return;
+            currentMode = mode;
+            if (mode === 'hybrid') currentSteps = STEPS_HYBRID;
+            else if (mode === 'local') currentSteps = STEPS_LOCAL;
+            else if (mode === 'remote') currentSteps = STEPS_REMOTE;
+            activeStep = 0; isPlaying = false; clearInterval(timerRef);
+            elements.modeBtns.forEach(btn => {
+                if (btn.dataset.mode === mode) {
+                    btn.classList.replace('bg-slate-100', 'bg-blue-600');
+                    btn.classList.replace('text-slate-600', 'text-white');
+                    btn.classList.add('border-blue-600');
+                } else {
+                    btn.classList.replace('bg-blue-600', 'bg-slate-100');
+                    btn.classList.replace('text-white', 'text-slate-600');
+                    btn.classList.remove('border-blue-600');
+                }
+            });
+            renderEntities(); renderLifelines(); updateUI();
+        }
+
+        function setupEventListeners() {
+            elements.btnPlay.addEventListener('click', () => {
+                if (activeStep >= currentSteps.length - 1 && !isPlaying) activeStep = 0;
+                isPlaying = !isPlaying; updateUI();
+                if (isPlaying) {
+                    timerRef = setInterval(() => {
+                        if (activeStep >= currentSteps.length - 1) { isPlaying = false; clearInterval(timerRef); }
+                        else activeStep++;
+                        updateUI();
+                    }, speed);
+                } else clearInterval(timerRef);
+            });
+            elements.btnReset.addEventListener('click', () => { isPlaying = false; activeStep = 0; clearInterval(timerRef); updateUI(); });
+            elements.btnPrev.addEventListener('click', () => { activeStep = Math.max(0, activeStep - 1); updateUI(); });
+            elements.btnNext.addEventListener('click', () => { activeStep = Math.min(currentSteps.length - 1, activeStep + 1); updateUI(); });
+            elements.modeBtns.forEach(btn => btn.addEventListener('click', (e) => setMode(e.currentTarget.dataset.mode)));
+        }
+
+        init();
+    </script>
+</body>
+
+</html>
