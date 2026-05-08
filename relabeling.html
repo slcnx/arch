@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prometheus Relabeling 图解</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes slideRight {
+            0% {
+                transform: translateX(-8px);
+                opacity: 0;
+            }
+
+            50% {
+                opacity: 1;
+            }
+
+            100% {
+                transform: translateX(8px);
+                opacity: 0;
+            }
+        }
+
+        .animate-slide-right {
+            animation: slideRight 2s ease-in-out infinite;
+        }
+
+        @keyframes slideDown {
+            0% {
+                transform: translateY(-8px);
+                opacity: 0;
+            }
+
+            50% {
+                opacity: 1;
+            }
+
+            100% {
+                transform: translateY(8px);
+                opacity: 0;
+            }
+        }
+
+        .animate-slide-down {
+            animation: slideDown 2s ease-in-out infinite;
+        }
+
+        @keyframes popIn {
+            0% {
+                transform: translateY(20px);
+                opacity: 0;
+            }
+
+            100% {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .animate-pop-in {
+            animation: popIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        .opacity-0 {
+            opacity: 0;
+        }
+
+        @keyframes breathing {
+
+            0%,
+            100% {
+                transform: scale(1.1);
+                opacity: 0.5;
+            }
+
+            50% {
+                transform: scale(1.2);
+                opacity: 0.8;
+            }
+        }
+
+        .animate-breathing {
+            animation: breathing 3s ease-in-out infinite;
+        }
+    </style>
+</head>
+
+<body class="min-h-screen bg-slate-50 p-6 font-sans text-slate-800 overflow-hidden">
+
+    <div class="max-w-5xl mx-auto space-y-8">
+
+        <!-- Header -->
+        <div class="text-center space-y-4 opacity-0 animate-pop-in" style="animation-delay: 0.1s;">
+            <h1 class="text-3xl font-bold text-slate-900">Prometheus Relabeling 机制解析</h1>
+            <p class="text-slate-600">一图看懂 relabel_configs 与 metric_relabel_configs 的区别与生命周期</p>
+        </div>
+
+        <!-- Pipeline Diagram (Animated) -->
+        <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200 opacity-0 animate-pop-in"
+            style="animation-delay: 0.2s;">
+            <h2 class="text-xl font-bold mb-6 text-center text-slate-800">Prometheus 数据抓取生命周期</h2>
+
+            <!-- Desktop/Tablet Horizontal Flow -->
+            <div class="hidden md:flex items-center justify-between gap-4">
+                <!-- Step 1 -->
+                <div class="flex flex-col items-center flex-1 opacity-0 animate-pop-in" style="animation-delay: 0.4s;">
+                    <div
+                        class="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center border-2 border-slate-300 z-10 transition-transform hover:scale-110">
+                        <!-- Search Icon -->
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="w-8 h-8 text-slate-600">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                    </div>
+                    <h3 class="font-semibold mt-3">服务发现</h3>
+                    <p class="text-xs text-slate-500 text-center mt-1">发现潜在的 Target<br>获取 __meta_ 标签</p>
+                </div>
+
+                <!-- Arrow Right -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    class="w-6 h-6 text-slate-400 flex-shrink-0 animate-slide-right">
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                    <polyline points="12 5 19 12 12 19"></polyline>
+                </svg>
+
+                <!-- Step 2: relabel_configs -->
+                <div class="flex flex-col items-center flex-1 relative group opacity-0 animate-pop-in"
+                    style="animation-delay: 0.7s;">
+                    <div class="absolute inset-0 bg-blue-100 rounded-lg -z-10 animate-breathing"></div>
+                    <div
+                        class="w-16 h-16 bg-blue-500 rounded-lg shadow-md flex items-center justify-center z-10 transition-transform group-hover:rotate-6 group-hover:scale-105">
+                        <!-- Filter Icon -->
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="w-8 h-8 text-white">
+                            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+                        </svg>
+                    </div>
+                    <h3 class="font-bold mt-3 text-blue-700">relabel_configs</h3>
+                    <p
+                        class="text-xs text-blue-600 text-center mt-1 font-medium bg-blue-50 px-2 py-1 rounded border border-blue-200 mt-2">
+                        抓取前处理<br>过滤/修改 Target
+                    </p>
+                </div>
+
+                <!-- Arrow Right -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    class="w-6 h-6 text-slate-400 flex-shrink-0 animate-slide-right" style="animation-delay: 0.2s;">
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                    <polyline points="12 5 19 12 12 19"></polyline>
+                </svg>
+
+                <!-- Step 3: Scrape -->
+                <div class="flex flex-col items-center flex-1 opacity-0 animate-pop-in" style="animation-delay: 1.0s;">
+                    <div
+                        class="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center border-2 border-slate-300 z-10 transition-transform hover:scale-110">
+                        <!-- Server Icon -->
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="w-8 h-8 text-slate-600">
+                            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                            <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                            <line x1="6" y1="18" x2="6.01" y2="18"></line>
+                        </svg>
+                    </div>
+                    <h3 class="font-semibold mt-3">HTTP 抓取</h3>
+                    <p class="text-xs text-slate-500 text-center mt-1">请求 /metrics<br>获取原始指标数据</p>
+                </div>
+
+                <!-- Arrow Right -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    class="w-6 h-6 text-slate-400 flex-shrink-0 animate-slide-right" style="animation-delay: 0.4s;">
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                    <polyline points="12 5 19 12 12 19"></polyline>
+                </svg>
+
+                <!-- Step 4: metric_relabel_configs -->
+                <div class="flex flex-col items-center flex-1 relative group opacity-0 animate-pop-in"
+                    style="animation-delay: 1.3s;">
+                    <div class="absolute inset-0 bg-emerald-100 rounded-lg -z-10 animate-breathing"
+                        style="animation-delay: 1s;"></div>
+                    <div
+                        class="w-16 h-16 bg-emerald-500 rounded-lg shadow-md flex items-center justify-center z-10 transition-transform group-hover:-rotate-6 group-hover:scale-105">
+                        <!-- Activity Icon -->
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="w-8 h-8 text-white animate-pulse">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                        </svg>
+                    </div>
+                    <h3 class="font-bold mt-3 text-emerald-700">metric_relabel_configs</h3>
+                    <p
+                        class="text-xs text-emerald-600 text-center mt-1 font-medium bg-emerald-50 px-2 py-1 rounded border border-emerald-200 mt-2">
+                        抓取后处理<br>过滤/修改 Metrics
+                    </p>
+                </div>
+
+                <!-- Arrow Right -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    class="w-6 h-6 text-slate-400 flex-shrink-0 animate-slide-right" style="animation-delay: 0.6s;">
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                    <polyline points="12 5 19 12 12 19"></polyline>
+                </svg>
+
+                <!-- Step 5: TSDB -->
+                <div class="flex flex-col items-center flex-1 opacity-0 animate-pop-in" style="animation-delay: 1.6s;">
+                    <div
+                        class="w-16 h-16 bg-slate-800 rounded-lg shadow-md flex items-center justify-center z-10 transition-transform hover:scale-110">
+                        <!-- Database Icon -->
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="w-8 h-8 text-white">
+                            <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                            <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+                            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+                        </svg>
+                    </div>
+                    <h3 class="font-semibold mt-3 text-slate-800">TSDB 存储</h3>
+                    <p class="text-xs text-slate-500 text-center mt-1">持久化时间序列数据</p>
+                </div>
+            </div>
+
+            <!-- Mobile Vertical Flow (Animated) -->
+            <div class="md:hidden flex flex-col items-center gap-4">
+                <div class="flex items-center gap-4 w-full opacity-0 animate-pop-in" style="animation-delay: 0.4s;">
+                    <div class="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center flex-shrink-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="w-6 h-6 text-slate-600">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold">1. 服务发现 (Service Discovery)</h3>
+                        <p class="text-sm text-slate-500">发现目标，获取 __meta_ 标签</p>
+                    </div>
+                </div>
+
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    class="w-5 h-5 text-slate-300 animate-slide-down">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <polyline points="19 12 12 19 5 12"></polyline>
+                </svg>
+
+                <div class="flex items-center gap-4 w-full bg-blue-50 p-3 rounded-lg border border-blue-100 opacity-0 animate-pop-in"
+                    style="animation-delay: 0.7s;">
+                    <div class="w-12 h-12 bg-blue-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="w-6 h-6 text-white">
+                            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-blue-700">2. relabel_configs (抓取前)</h3>
+                        <p class="text-sm text-blue-600">决定抓取哪些机器，修改目标 IP/Port</p>
+                    </div>
+                </div>
+
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    class="w-5 h-5 text-slate-300 animate-slide-down" style="animation-delay: 0.2s;">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <polyline points="19 12 12 19 5 12"></polyline>
+                </svg>
+
+                <div class="flex items-center gap-4 w-full opacity-0 animate-pop-in" style="animation-delay: 1.0s;">
+                    <div class="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center flex-shrink-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="w-6 h-6 text-slate-600">
+                            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                            <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                            <line x1="6" y1="18" x2="6.01" y2="18"></line>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold">3. HTTP 抓取 (Scrape)</h3>
+                        <p class="text-sm text-slate-500">向 Target 发起请求获取指标</p>
+                    </div>
+                </div>
+
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    class="w-5 h-5 text-slate-300 animate-slide-down" style="animation-delay: 0.4s;">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <polyline points="19 12 12 19 5 12"></polyline>
+                </svg>
+
+                <div class="flex items-center gap-4 w-full bg-emerald-50 p-3 rounded-lg border border-emerald-100 opacity-0 animate-pop-in"
+                    style="animation-delay: 1.3s;">
+                    <div class="w-12 h-12 bg-emerald-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="w-6 h-6 text-white animate-pulse">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-emerald-700">4. metric_relabel_configs (抓取后)</h3>
+                        <p class="text-sm text-emerald-600">过滤不需要的指标，缩减存储压力</p>
+                    </div>
+                </div>
+
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    class="w-5 h-5 text-slate-300 animate-slide-down" style="animation-delay: 0.6s;">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <polyline points="19 12 12 19 5 12"></polyline>
+                </svg>
+
+                <div class="flex items-center gap-4 w-full opacity-0 animate-pop-in" style="animation-delay: 1.6s;">
+                    <div class="w-12 h-12 bg-slate-800 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="w-6 h-6 text-white">
+                            <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                            <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+                            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold">5. TSDB 存储</h3>
+                        <p class="text-sm text-slate-500">写入数据库</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Detailed Comparison & Use Cases -->
+        <div class="grid md:grid-cols-2 gap-6 opacity-0 animate-pop-in" style="animation-delay: 1.8s;">
+
+            <!-- relabel_configs Card -->
+            <div
+                class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col hover:shadow-md transition-shadow">
+                <div class="bg-blue-500 text-white p-4">
+                    <div class="flex items-center gap-2 mb-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="w-5 h-5">
+                            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+                        </svg>
+                        <h2 class="text-xl font-bold">relabel_configs</h2>
+                    </div>
+                    <p class="text-blue-100 text-sm">抓取前 (Before Scrape) 的目标管理器</p>
+                </div>
+
+                <div class="p-6 flex-1 flex flex-col gap-6">
+                    <div>
+                        <h3 class="font-semibold text-slate-800 flex items-center gap-2 mb-3 border-b pb-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round" class="w-4 h-4 text-blue-500">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <circle cx="12" cy="12" r="6"></circle>
+                                <circle cx="12" cy="12" r="2"></circle>
+                            </svg>
+                            核心作用
+                        </h3>
+                        <p class="text-sm text-slate-600 leading-relaxed">
+                            管理通讯录。在发请求去抓数据之前，用来筛选要抓取的机器 (Target)，或者修改抓取目标的地址和附加在目标上的默认标签。
+                        </p>
+                    </div>
+
+                    <div>
+                        <h3 class="font-semibold text-slate-800 flex items-center gap-2 mb-3 border-b pb-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round" class="w-4 h-4 text-blue-500">
+                                <path d="M12 20h9"></path>
+                                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                            </svg>
+                            常见使用场景
+                        </h3>
+                        <ul class="space-y-4">
+                            <li
+                                class="flex gap-3 text-sm text-slate-600 bg-slate-50 p-3 rounded border border-slate-100 hover:bg-slate-100 transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round" class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5">
+                                    <polyline points="3 6 5 6 21 6"></polyline>
+                                    <path
+                                        d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2">
+                                    </path>
+                                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                                </svg>
+                                <div>
+                                    <strong class="block text-slate-800">1. 丢弃不需要的目标 (Drop/Keep)</strong>
+                                    比如服务发现找到了 100 个 Pod，但只抓取带有 <code>env=prod</code> 标签的 Pod，直接忽略测试环境，避免产生无效 HTTP 请求。
+                                </div>
+                            </li>
+                            <li
+                                class="flex gap-3 text-sm text-slate-600 bg-slate-50 p-3 rounded border border-slate-100 hover:bg-slate-100 transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round" class="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <circle cx="12" cy="12" r="6"></circle>
+                                    <circle cx="12" cy="12" r="2"></circle>
+                                </svg>
+                                <div>
+                                    <strong class="block text-slate-800">2. 修改抓取地址 (__address__)</strong>
+                                    默认目标 IP 是局域网 IP，但在跨集群监控时，可能需要将抓取地址替换为外网暴露的域名或通过代理端口来抓取。
+                                </div>
+                            </li>
+                            <li
+                                class="flex gap-3 text-sm text-slate-600 bg-slate-50 p-3 rounded border border-slate-100 hover:bg-slate-100 transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round" class="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5">
+                                    <path d="M12 20h9"></path>
+                                    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                                </svg>
+                                <div>
+                                    <strong class="block text-slate-800">3. 提取和重命名元数据标签</strong>
+                                    K8s 自动生成的标签太长（如 <code>__meta_kubernetes_pod_name</code>），提取它的值并重命名为短标签
+                                    <code>pod</code> 附加到目标上。
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- metric_relabel_configs Card -->
+            <div
+                class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col hover:shadow-md transition-shadow">
+                <div class="bg-emerald-500 text-white p-4">
+                    <div class="flex items-center gap-2 mb-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="w-5 h-5">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                        </svg>
+                        <h2 class="text-xl font-bold">metric_relabel_configs</h2>
+                    </div>
+                    <p class="text-emerald-100 text-sm">抓取后 (After Scrape) 的指标清洗器</p>
+                </div>
+
+                <div class="p-6 flex-1 flex flex-col gap-6">
+                    <div>
+                        <h3 class="font-semibold text-slate-800 flex items-center gap-2 mb-3 border-b pb-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round" class="w-4 h-4 text-emerald-500">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <circle cx="12" cy="12" r="6"></circle>
+                                <circle cx="12" cy="12" r="2"></circle>
+                            </svg>
+                            核心作用
+                        </h3>
+                        <p class="text-sm text-slate-600 leading-relaxed">
+                            精简日记本。数据已经抓回来了，但在存入本地硬盘 (TSDB) 之前，把没用的、太耗空间的指标删掉，或者把指标的名字/标签改掉。
+                        </p>
+                    </div>
+
+                    <div>
+                        <h3 class="font-semibold text-slate-800 flex items-center gap-2 mb-3 border-b pb-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round" class="w-4 h-4 text-emerald-500">
+                                <path d="M12 20h9"></path>
+                                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                            </svg>
+                            常见使用场景
+                        </h3>
+                        <ul class="space-y-4">
+                            <li
+                                class="flex gap-3 text-sm text-slate-600 bg-slate-50 p-3 rounded border border-slate-100 hover:bg-slate-100 transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round" class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5">
+                                    <polyline points="3 6 5 6 21 6"></polyline>
+                                    <path
+                                        d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2">
+                                    </path>
+                                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                                </svg>
+                                <div>
+                                    <strong class="block text-slate-800">1. 丢弃高基数/无用指标（省钱/省内存利器）</strong>
+                                    某个组件暴露了成百上千个你根本不看的调试指标（比如 cAdvisor 的某些网络详细指标），或者某个标签包含用户 ID（基数极高易致 OOM），直接 Drop 掉。
+                                </div>
+                            </li>
+                            <li
+                                class="flex gap-3 text-sm text-slate-600 bg-slate-50 p-3 rounded border border-slate-100 hover:bg-slate-100 transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round" class="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5">
+                                    <path d="M12 20h9"></path>
+                                    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                                </svg>
+                                <div>
+                                    <strong class="block text-slate-800">2. 删除敏感/冗余标签</strong>
+                                    目标暴露的指标里带有了敏感的 token 标签，或者带有和你的元数据标签重复的标签（冲突时）。通过 <code>labeldrop</code> 把特定标签删掉。
+                                </div>
+                            </li>
+                            <li
+                                class="flex gap-3 text-sm text-slate-600 bg-slate-50 p-3 rounded border border-slate-100 hover:bg-slate-100 transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round" class="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5">
+                                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                                </svg>
+                                <div>
+                                    <strong class="block text-slate-800">3. 标准化指标标签值</strong>
+                                    例如有的开发同事把 HTTP 状态码写成了 <code>status="200 OK"</code>，有的写成
+                                    <code>status="200"</code>。你可以在这里用正则统一清洗替换为数字，方便 Grafana 统一画图。
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</body>
+
+</html>
