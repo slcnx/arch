@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Linux 磁盘排查流程图</title>
+    <!-- 引入 Tailwind CSS 进行快速样式构建 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 隐藏滚动条但保留滚动功能（如果有） */
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+            /* Tailwind slate-50 */
+        }
+
+        /* 拖拽相关光标样式 */
+        .cursor-grab {
+            cursor: grab;
+        }
+
+        .cursor-grabbing {
+            cursor: grabbing;
+        }
+
+        /* 点阵背景图模式 */
+        .bg-dots {
+            background-image: url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMiIgY3k9IjIiIHI9IjEiIGZpbGw9IiNlNWU3ZWIiLz48L3N2Zz4=');
+        }
+
+        /* 节点通用及特化样式，模拟之前 React 的预定义样式 */
+        .node {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            z-index: 10;
+            white-space: pre-wrap;
+            box-sizing: border-box;
+        }
+
+        /* 各类型节点的具体视觉风格 */
+        .node-alert {
+            border: 2px solid #ef4444;
+            background-color: #fef2f2;
+            color: #b91c1c;
+            font-weight: bold;
+            padding: 0.75rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            line-height: 1.5;
+        }
+
+        .node-action {
+            border: 2px solid #3b82f6;
+            background-color: #eff6ff;
+            color: #1e40af;
+            font-weight: bold;
+            padding: 0.75rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            line-height: 1.5;
+        }
+
+        .node-cmd {
+            border: 1px solid #0891b2;
+            background-color: #111827;
+            color: #4ade80;
+            font-family: monospace;
+            font-size: 0.875rem;
+            padding: 0.75rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            white-space: nowrap;
+            line-height: 1.5;
+        }
+
+        .node-note {
+            border: 2px dashed #fb923c;
+            background-color: #fff7ed;
+            color: #c2410c;
+            font-size: 0.875rem;
+            padding: 0.75rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            line-height: 1.5;
+        }
+
+        .node-check {
+            border: 2px solid #22c55e;
+            background-color: #f0fdf4;
+            color: #166534;
+            font-weight: bold;
+            padding: 0.75rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            line-height: 1.5;
+        }
+
+        .node-fix {
+            border: 2px solid #a855f7;
+            background-color: #faf5ff;
+            color: #6b21a8;
+            font-weight: bold;
+            padding: 0.75rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            line-height: 1.5;
+        }
+
+        .node-lr-signal {
+            border: 2px solid #10b981;
+            background-color: #ecfdf5;
+            color: #064e3b;
+            font-size: 0.875rem;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            text-align: left;
+            line-height: 1.6;
+        }
+
+        .node-lr-copy {
+            border: 2px solid #f43f5e;
+            background-color: #fff1f2;
+            color: #881337;
+            font-size: 0.875rem;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            text-align: left;
+            line-height: 1.6;
+        }
+
+        .node-code {
+            border: 1px solid #4b5563;
+            background-color: #111827;
+            color: #4ade80;
+            font-family: monospace;
+            font-size: 0.875rem;
+            padding: 1.25rem;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            text-align: left;
+            line-height: 1.625;
+        }
+
+        /* SVG 连线样式 */
+        svg path {
+            fill: none;
+            stroke-width: 2;
+        }
+
+        .edge-solid {
+            stroke: #9ca3af;
+        }
+
+        .edge-dashed {
+            stroke: #fb923c;
+            stroke-dasharray: 5, 5;
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: .5;
+            }
+        }
+    </style>
+</head>
+
+<body class="flex flex-col h-screen w-full">
+
+    <!-- 顶部控制栏：标题、说明和控制按钮 -->
+    <header class="bg-gray-800 text-white p-4 shadow-md z-20 flex justify-between items-center shrink-0">
+        <div>
+            <h1 class="text-xl font-bold m-0">Linux 磁盘空间爆满排查与定位流程</h1>
+            <p class="text-sm text-gray-400 mt-1 mb-0">从宏观分区定位到微观文件清理的标准化 SRE 流程。可拖拽背景，按住 Ctrl+滚轮缩放。</p>
+        </div>
+        <div class="flex gap-2">
+            <button id="btn-zoom-in"
+                class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm transition-colors">+</button>
+            <button id="btn-zoom-out"
+                class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm transition-colors">-</button>
+            <button id="btn-reset"
+                class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm transition-colors">重置</button>
+        </div>
+    </header>
+
+    <!-- 核心画布区域：处理拖拽和缩放事件，背景有点阵模式 -->
+    <main id="canvas-container" class="flex-1 relative overflow-hidden cursor-grab bg-dots">
+        <!-- 实际应用变换（平移和缩放）的图层 -->
+        <div id="transform-layer"
+            class="absolute origin-top-left transition-transform duration-75 ease-out w-full h-full"
+            style="transform: translate(0px, 0px) scale(1);">
+
+            <!-- SVG 层：用于绘制节点之间的连线和箭头 -->
+            <svg class="absolute top-0 left-0 w-[3000px] h-[2000px] pointer-events-none" style="z-index: 0;">
+                <defs>
+                    <!-- 实线箭头标记 -->
+                    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                        <polygon points="0 0, 10 3.5, 0 7" fill="#9ca3af" />
+                    </marker>
+                    <!-- 虚线箭头标记 -->
+                    <marker id="arrowhead-dash" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                        <polygon points="0 0, 10 3.5, 0 7" fill="#fb923c" />
+                    </marker>
+                </defs>
+                <!-- 所有的 <path> 元素将通过 JS 动态生成并注入到此 -->
+                <g id="edges-group"></g>
+            </svg>
+
+            <!-- 节点层：所有的 HTML 节点元素将注入到此 -->
+            <div id="nodes-group"></div>
+        </div>
+    </main>
+
+    <script>
+        /** 
+         * 状态管理：缩放比例和平移位置 
+         */
+        let state = {
+            scale: 1,
+            position: { x: 0, y: 0 },
+            isDragging: false,
+            dragStart: { x: 0, y: 0 }
+        };
+
+        const transformLayer = document.getElementById('transform-layer');
+        const canvasContainer = document.getElementById('canvas-container');
+
+        /**
+         * 节点数据定义中心：
+         * 包含了画布上所有节点的位置 (x,y)、尺寸 (w,h)、文本内容 (label) 以及 CSS 类名标识 (type)
+         */
+        const nodesData = {
+            start: { x: 120, y: 150, w: 200, h: 80, label: "🔴 收到告警\n磁盘空间不足", type: "alert" },
+
+            step1: { x: 460, y: 150, w: 240, h: 70, label: "1. 宏观定位异常分区", type: "action" },
+            cmd1: { x: 460, y: 270, w: 220, h: 50, label: "$ df -TH", type: "cmd" },
+            check1: { x: 460, y: 390, w: 240, h: 70, label: "发现 '/' 分区\n占用 71%", type: "check" },
+
+            step2: { x: 860, y: 150, w: 240, h: 70, label: "2. 找异常目录\n(防跨区)", type: "action" },
+            cmd2: { x: 860, y: 270, w: 340, h: 50, label: "$ du -hx --max-depth=1 /", type: "cmd" },
+            note1: { x: 860, y: 390, w: 280, h: 80, label: "⚠️ 必须加 -x 参数\n防扫描 /data 等巨型挂载点", type: "note" },
+            check2: { x: 860, y: 510, w: 240, h: 70, label: "定位到 '/tmp'\n异常占 12G", type: "check" },
+
+            step3: { x: 1320, y: 150, w: 240, h: 70, label: "3. 定位具体文件\n(防隐)", type: "action" },
+            cmd3: { x: 1320, y: 270, w: 380, h: 50, label: "$ du -ahx --max-depth=1 /tmp", type: "cmd" },
+            note2: { x: 1320, y: 390, w: 280, h: 80, label: "⚠️ 必须加 -a 参数\n否则单体大文件会被隐藏", type: "note" },
+            target: { x: 1320, y: 510, w: 300, h: 90, label: "锁定真凶:\nskywalking_agent...log\n(12G)", type: "alert" },
+
+            step4: { x: 1780, y: 150, w: 240, h: 70, label: "4. 安全清理\n(防句柄)", type: "action" },
+            cmd4: { x: 1780, y: 270, w: 300, h: 50, label: "$ > /tmp/...kafka.log", type: "cmd" },
+            note3: { x: 1780, y: 390, w: 280, h: 80, label: "⚠️ 切勿用 rm 命令直接删\n必须用 > 截断，否则空间不释放", type: "note" },
+
+            step5: { x: 2200, y: 150, w: 240, h: 70, label: "5. 彻底根治分析", type: "action" },
+            fix1: { x: 2200, y: 270, w: 240, h: 70, label: "治本: 排查 Kafka 连通性", type: "fix" },
+            fix2: { x: 2200, y: 390, w: 240, h: 70, label: "治标: 调高日志级别", type: "fix" },
+            fix3: { x: 2200, y: 510, w: 240, h: 70, label: "保障: 增加 Logrotate", type: "fix" },
+
+            lr_signal: { x: 2800, y: 200, w: 420, h: 140, label: "✅ 支持信号的程序 (如 Nginx/MySQL)\n默认机制 (Create):\n1. mv 重命名旧文件\n2. create 创建新空日志文件\n3. kill -USR1 发信号让程序重开文件句柄", type: "lr-signal" },
+            lr_signal_code: { x: 2800, y: 410, w: 520, h: 220, label: "# /etc/logrotate.d/nginx\n/var/log/nginx/*.log {\n    daily             # 每天轮转\n    rotate 7          # 保留7份\n    missingok         # 文件丢失不报错\n    create 0640 nginx nginx # [核心] 新建空文件权限\n    sharedscripts     # 多个文件只执行一次脚本\n    postrotate\n        [ -f /var/run/nginx.pid ] && kill -USR1 `cat /var/run/nginx.pid`\n    endscript         # [核心] 轮转后发信号要求重开句柄\n}", type: "code" },
+
+            lr_copy: { x: 2800, y: 720, w: 420, h: 150, label: "❌ 不支持信号的程序 (如本例 PHP 扩展)\n必须使用 copytruncate 参数:\n1. Copy: 完整复制当前文件内容备档\n2. Truncate: 瞬间截断原文件(大小归0)\n程序完全无感，句柄不变，继续写原文件", type: "lr-copy" },
+            lr_copy_code: { x: 2800, y: 950, w: 520, h: 220, label: "# /etc/logrotate.d/skywalking-php\n/tmp/skywalking_agent_kafka.log {\n    su root root      # [安全] /tmp是777，需指定身份防提权\n    daily             # [触发] 每天检查\n    size 50M          # [触发] 双重保险，超50M立刻轮转\n    rotate 3          # [清理] 保留3个备份，老的自动删除\n    missingok         # [容错] 文件不存在不报错\n    notifempty        # [容错] 空文件不轮转\n    copytruncate      # [核心] 拷贝并清空，程序句柄无感！\n}", type: "code" }
+        };
+
+        // 辅助函数：根据节点键名和高度/宽度计算连线连接点的坐标
+        const getPoint = (key, pos) => {
+            const node = nodesData[key];
+            if (!node) return { x: 0, y: 0 };
+            switch (pos) {
+                case 'bottom': return { x: node.x, y: node.y + node.h / 2 };
+                case 'top': return { x: node.x, y: node.y - node.h / 2 };
+                case 'right': return { x: node.x + node.w / 2, y: node.y };
+                case 'left': return { x: node.x - node.w / 2, y: node.y };
+                default: return { x: node.x, y: node.y };
+            }
+        };
+
+        /**
+         * 渲染 HTML 节点到容器中
+         */
+        function renderNodes() {
+            const container = document.getElementById('nodes-group');
+            let htmlString = '';
+
+            for (const [key, node] of Object.entries(nodesData)) {
+                // 将转义字符转换为换行，处理由于纯文本带来的 \n 显示问题
+                const labelHTML = node.label.replace(/\n/g, '<br/>');
+
+                htmlString += `
+                    <div class="node node-${node.type}" 
+                         style="left: ${node.x}px; top: ${node.y}px; width: ${node.w}px; height: ${node.h}px;"
+                         id="node-${key}">
+                        <span>${labelHTML}</span>
+                    </div>
+                `;
+            }
+            container.innerHTML = htmlString;
+        }
+
+        /**
+         * 生成 SVG 连线路径数据 (d attribute)
+         */
+        function createEdgePath(startNode, startPos, endNode, endPos, curveType = "none") {
+            const start = getPoint(startNode, startPos);
+            const end = getPoint(endNode, endPos);
+
+            if (curveType === "none") {
+                return `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
+            } else if (curveType === "smooth") {
+                const midX = (start.x + end.x) / 2;
+                return `M ${start.x} ${start.y} C ${midX} ${start.y}, ${midX} ${end.y}, ${end.x} ${end.y}`;
+            } else if (curveType === "step") {
+                const midX = (start.x + end.x) / 2;
+                return `M ${start.x} ${start.y} L ${midX} ${start.y} L ${midX} ${end.y} L ${end.x} ${end.y}`;
+            }
+            return "";
+        }
+
+        /**
+         * 渲染所有定义的连线到 SVG 容器
+         */
+        function renderEdges() {
+            const edgesGroup = document.getElementById('edges-group');
+
+            // 定义连线配置数组：起点节点, 起点位置, 终点节点, 终点位置, 线条类型(solid|dashed), 曲线类型(none|step)
+            const edgesDef = [
+                // 横向主流程脊柱
+                ['start', 'right', 'step1', 'left', 'solid', 'none'],
+                ['step1', 'right', 'step2', 'left', 'solid', 'none'],
+                ['step2', 'right', 'step3', 'left', 'solid', 'none'],
+                ['step3', 'right', 'step4', 'left', 'solid', 'none'],
+                ['step4', 'right', 'step5', 'left', 'solid', 'none'],
+
+                // 各步骤纵向下钻分支
+                ['step1', 'bottom', 'cmd1', 'top', 'solid', 'none'],
+                ['cmd1', 'bottom', 'check1', 'top', 'solid', 'none'],
+
+                ['step2', 'bottom', 'cmd2', 'top', 'solid', 'none'],
+                ['cmd2', 'bottom', 'note1', 'top', 'dashed', 'none'],
+                ['note1', 'bottom', 'check2', 'top', 'solid', 'none'],
+
+                ['step3', 'bottom', 'cmd3', 'top', 'solid', 'none'],
+                ['cmd3', 'bottom', 'note2', 'top', 'dashed', 'none'],
+                ['note2', 'bottom', 'target', 'top', 'solid', 'none'],
+
+                ['step4', 'bottom', 'cmd4', 'top', 'solid', 'none'],
+                ['cmd4', 'bottom', 'note3', 'top', 'dashed', 'none'],
+
+                ['step5', 'bottom', 'fix1', 'top', 'solid', 'none'],
+                ['fix1', 'bottom', 'fix2', 'top', 'solid', 'none'],
+                ['fix2', 'bottom', 'fix3', 'top', 'solid', 'none'],
+
+                // 复杂分支：Logrotate 机制分离对比
+                ['fix3', 'right', 'lr_signal', 'left', 'solid', 'step'],
+                ['fix3', 'right', 'lr_copy', 'left', 'solid', 'step'],
+
+                // 代码示例连接（虚线）
+                ['lr_signal', 'bottom', 'lr_signal_code', 'top', 'dashed', 'none'],
+                ['lr_copy', 'bottom', 'lr_copy_code', 'top', 'dashed', 'none']
+            ];
+
+            let htmlString = '';
+            edgesDef.forEach(def => {
+                const [startNode, startPos, endNode, endPos, type, curve] = def;
+                const pathData = createEdgePath(startNode, startPos, endNode, endPos, curve);
+
+                const className = type === 'dashed' ? 'edge-dashed' : 'edge-solid';
+                const markerEnd = type === 'dashed' ? 'url(#arrowhead-dash)' : 'url(#arrowhead)';
+
+                htmlString += `
+                    <path d="${pathData}" class="${className}" marker-end="${markerEnd}"></path>
+                `;
+            });
+
+            edgesGroup.innerHTML = htmlString;
+        }
+
+        /**
+         * 统一更新视图层变换（应用于 Transform Layer）
+         */
+        function updateTransform() {
+            transformLayer.style.transform = `translate(${state.position.x}px, ${state.position.y}px) scale(${state.scale})`;
+        }
+
+        // ==================== 鼠标拖拽事件监听 ====================
+        canvasContainer.addEventListener('mousedown', (e) => {
+            // 确保只有左键点击且没有点在控制按钮上才触发拖拽
+            if (e.button !== 0) return;
+            state.isDragging = true;
+            canvasContainer.classList.add('cursor-grabbing');
+            canvasContainer.classList.remove('cursor-grab');
+
+            // 记录鼠标按下位置与当前图层位置的偏差
+            state.dragStart = {
+                x: e.clientX - state.position.x,
+                y: e.clientY - state.position.y
+            };
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!state.isDragging) return;
+            // 计算新的平移位置并更新视图
+            state.position.x = e.clientX - state.dragStart.x;
+            state.position.y = e.clientY - state.dragStart.y;
+            updateTransform();
+        });
+
+        const stopDragging = () => {
+            if (state.isDragging) {
+                state.isDragging = false;
+                canvasContainer.classList.remove('cursor-grabbing');
+                canvasContainer.classList.add('cursor-grab');
+            }
+        };
+
+        window.addEventListener('mouseup', stopDragging);
+
+        // 允许触控板双指滑动来平移（模拟鼠标拖拽），这里简单处理wheel默认行为
+        // 真正复杂的触控平移需要兼顾各种浏览器实现，本例侧重基础拖拽体验
+
+        // ==================== 滚轮缩放事件监听 ====================
+        canvasContainer.addEventListener('wheel', (e) => {
+            // 强制要求按住 Ctrl 键才允许缩放，避免普通滚动误触
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                // 确定缩放方向：向上滚放大，向下滚缩小
+                const delta = e.deltaY > 0 ? -0.1 : 0.1;
+                // 限制缩放级别在 0.4 到 2 之间
+                state.scale = Math.min(Math.max(0.4, state.scale + delta), 2);
+                updateTransform();
+            }
+        }, { passive: false }); // 需要 preventDefault() 所以 passive 为 false
+
+        // ==================== UI 按钮控制逻辑 ====================
+        document.getElementById('btn-zoom-in').addEventListener('click', () => {
+            state.scale = Math.min(state.scale + 0.1, 2);
+            updateTransform();
+        });
+
+        document.getElementById('btn-zoom-out').addEventListener('click', () => {
+            state.scale = Math.max(state.scale - 0.1, 0.4);
+            updateTransform();
+        });
+
+        document.getElementById('btn-reset').addEventListener('click', () => {
+            state.scale = 1;
+            state.position = { x: 0, y: 0 };
+            updateTransform();
+        });
+
+        // 初始化运行：绘制节点和连线，确保 DOM 完全加载后执行
+        document.addEventListener('DOMContentLoaded', () => {
+            renderNodes();
+            renderEdges();
+            updateTransform(); // 施加初始状态
+        });
+
+    </script>
+</body>
+
+</html>
