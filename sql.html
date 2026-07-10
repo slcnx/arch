@@ -1,289 +1,688 @@
+
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SQL 智能诊断算法原理</title>
-    <!-- 引入 Tailwind CSS -->
+    <title>特征-算法-评分</title>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 引入 FontAwesome 图标库 -->
+    <!-- FontAwesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        /* 简单的淡入动画 */
-        .fade-in {
-            animation: fadeIn 0.5s ease-in-out;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
+        .slide-enter { animation: slideIn 0.4s ease-out forwards; }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(15px); }
             to { opacity: 1; transform: translateY(0); }
         }
+        .sql-box { font-family: 'Courier New', Courier, monospace; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
-<body class="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-800">
+<body class="bg-slate-50 min-h-screen text-slate-800 font-sans flex flex-col">
 
-    <div class="max-w-5xl mx-auto space-y-6">
-        
-        <!-- 头部 -->
-        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-            <h1 class="text-2xl md:text-3xl font-bold flex items-center gap-3 mb-2 text-slate-800">
-                <i class="fa-solid fa-microchip text-blue-600 text-3xl"></i>
-                SQL 智能诊断算法原理
+    <!-- 顶部导航 / 进度条 -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
+        <div class="max-w-6xl mx-auto px-4 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <i class="fa-solid fa-server text-indigo-600"></i>
+                DBA 慢查询智能诊断全链路
             </h1>
-            <p class="text-slate-500">
-                图解监控平台是如何通过 <strong>归一化</strong> 和 <strong>TF-IDF聚类</strong> 从海量日志中揪出你的慢查询的。
-            </p>
-        </div>
-
-        <!-- 导航标签 -->
-        <div class="flex flex-wrap gap-2 md:gap-4">
-            <!-- 按钮 1 -->
-            <button id="btn-1" onclick="showStep(1)" class="flex-1 min-w-[120px] p-4 rounded-xl font-bold transition-all flex flex-col items-center gap-2 border-2 bg-blue-600 text-white border-blue-600 shadow-md">
-                <i class="fa-solid fa-filter text-2xl"></i>
-                <span>1. SQL 归一化</span>
-            </button>
-            
-            <!-- 按钮 2 -->
-            <button id="btn-2" onclick="showStep(2)" class="flex-1 min-w-[120px] p-4 rounded-xl font-bold transition-all flex flex-col items-center gap-2 border-2 bg-white text-slate-500 border-slate-200 hover:border-purple-300">
-                <i class="fa-solid fa-chart-bar text-2xl"></i>
-                <span>2. TF-IDF 特征</span>
-            </button>
-
-            <!-- 按钮 3 -->
-            <button id="btn-3" onclick="showStep(3)" class="flex-1 min-w-[120px] p-4 rounded-xl font-bold transition-all flex flex-col items-center gap-2 border-2 bg-white text-slate-500 border-slate-200 hover:border-amber-300">
-                <i class="fa-solid fa-layer-group text-2xl"></i>
-                <span>3. 算法聚类分析</span>
-            </button>
-        </div>
-
-        <!-- 内容展示区 -->
-        <div class="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-200 min-h-[400px]">
-            
-            <!-- 步骤 1：归一化 -->
-            <div id="step-1" class="fade-in space-y-6 block">
-                <div class="bg-blue-50 p-4 rounded-lg border border-blue-100 mb-6">
-                    <h3 class="font-bold text-blue-800 flex items-center gap-2 mb-2">
-                        <i class="fa-solid fa-filter"></i> 核心动作：去除变量，保留骨架
-                    </h3>
-                    <p class="text-sm text-blue-600">
-                        线上每秒可能产生成百上千条长得差不多的 SQL，唯一的区别只是查询的 <code>question_id</code> 不同。归一化就是把具体的数值替换为 <code>?</code>，并统一大小写和空格。
-                    </p>
-                </div>
-
-                <div class="flex flex-col md:flex-row gap-6 items-stretch">
-                    <div class="flex-1 space-y-3">
-                        <div class="text-sm font-bold text-slate-500 mb-2">原始 SQL 日志 (海量)</div>
-                        <div class="p-3 bg-slate-100 rounded border border-slate-200 text-xs font-mono text-slate-600 break-words">
-                            select question_id, user_answer, count(*) as count from `yjy_user_answer_log` where `question_id` in ('<span class="bg-yellow-200 text-yellow-800 px-1 rounded">377488</span>') group by question_id, user_answer
-                        </div>
-                        <div class="p-3 bg-slate-100 rounded border border-slate-200 text-xs font-mono text-slate-600 break-words">
-                            SELECT question_id, user_answer, count(*) as count FROM yjy_user_answer_log WHERE question_id IN ('<span class="bg-yellow-200 text-yellow-800 px-1 rounded">999123</span>', '<span class="bg-yellow-200 text-yellow-800 px-1 rounded">999124</span>') GROUP BY question_id, user_answer
-                        </div>
-                        <div class="p-3 bg-slate-100 rounded border border-slate-200 text-xs font-mono text-slate-600 break-words">
-                            select question_id,user_answer,count(*) as count from `yjy_user_answer_log` where `question_id` in ('<span class="bg-yellow-200 text-yellow-800 px-1 rounded">1024</span>') group by question_id,user_answer
-                        </div>
-                    </div>
-                    
-                    <div class="flex items-center justify-center">
-                        <i class="fa-solid fa-arrow-right text-blue-400 text-3xl hidden md:block"></i>
-                        <div class="text-blue-400 text-sm font-bold md:hidden">↓ 归一化处理 ↓</div>
-                    </div>
-
-                    <div class="flex-1 flex flex-col">
-                        <div class="text-sm font-bold text-slate-500 mb-2">归一化后的 SQL 模板 (唯一)</div>
-                        <div class="flex-1 p-4 bg-emerald-50 rounded-lg border-2 border-emerald-400 text-sm font-mono text-emerald-800 flex items-center shadow-sm">
-                            <span>
-                                select question_id, user_answer, count(*) as count <br/>
-                                from yjy_user_answer_log <br/>
-                                where question_id in (<span class="bg-emerald-200 text-emerald-900 font-bold px-2 py-0.5 rounded mx-1">?</span>) <br/>
-                                group by question_id, user_answer
-                            </span>
-                        </div>
-                    </div>
-                </div>
+            <div class="text-sm font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-full self-start sm:self-auto shadow-inner">
+                当前阶段: Step <span id="current-step-indicator" class="text-indigo-600 text-base">1</span> / 8
             </div>
-
-            <!-- 步骤 2：TF-IDF -->
-            <div id="step-2" class="fade-in space-y-6 hidden">
-                <div class="bg-purple-50 p-4 rounded-lg border border-purple-100 mb-6">
-                    <h3 class="font-bold text-purple-800 flex items-center gap-2 mb-2">
-                        <i class="fa-solid fa-chart-bar"></i> 核心动作：词频-逆文档频率 (提取特征)
-                    </h3>
-                    <p class="text-sm text-purple-600">
-                        AI 无法直接理解 SQL，需要把它拆成词。<strong>TF(词频)</strong>：这个词在这句SQL里出现得多不多？ <strong>IDF(逆文档频率)</strong>：这个词在所有SQL里是不是很罕见？
-                        像 <code>SELECT</code> 到处都有，权重极低；而你的表名和字段名很特别，权重极高。
-                    </p>
-                </div>
-
-                <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                    <div class="mb-6 p-3 bg-slate-50 rounded font-mono text-sm text-slate-600 border border-slate-100">
-                        select question_id, user_answer, count(*) as count from yjy_user_answer_log where question_id in (?) group by question_id, user_answer
-                    </div>
-                    
-                    <div class="space-y-4">
-                        <div class="text-sm font-bold text-slate-500">特征词权重 (Vector Weights)</div>
-                        
-                        <!-- Weight Item 1 -->
-                        <div class="flex items-center gap-4">
-                            <div class="w-32 text-right font-mono text-sm text-slate-700 truncate">question_id</div>
-                            <div class="flex-1 h-6 bg-slate-100 rounded-full overflow-hidden flex items-center">
-                                <div class="h-full bg-purple-500" style="width: 85%"></div>
-                            </div>
-                            <div class="w-12 text-sm font-bold text-slate-600">0.85</div>
-                            <div class="w-48 text-xs text-slate-400 hidden md:block truncate">业务核心字段，区分度极高</div>
-                        </div>
-
-                        <!-- Weight Item 2 -->
-                        <div class="flex items-center gap-4">
-                            <div class="w-32 text-right font-mono text-sm text-slate-700 truncate">user_answer</div>
-                            <div class="flex-1 h-6 bg-slate-100 rounded-full overflow-hidden flex items-center">
-                                <div class="h-full bg-purple-500" style="width: 78%"></div>
-                            </div>
-                            <div class="w-12 text-sm font-bold text-slate-600">0.78</div>
-                            <div class="w-48 text-xs text-slate-400 hidden md:block truncate">业务核心字段，区分度高</div>
-                        </div>
-
-                        <!-- Weight Item 3 -->
-                        <div class="flex items-center gap-4">
-                            <div class="w-32 text-right font-mono text-sm text-slate-700 truncate">yjy_user_answer_log</div>
-                            <div class="flex-1 h-6 bg-slate-100 rounded-full overflow-hidden flex items-center">
-                                <div class="h-full bg-purple-500" style="width: 65%"></div>
-                            </div>
-                            <div class="w-12 text-sm font-bold text-slate-600">0.65</div>
-                            <div class="w-48 text-xs text-slate-400 hidden md:block truncate">表名，限定了业务域</div>
-                        </div>
-
-                        <!-- Weight Item 4 -->
-                        <div class="flex items-center gap-4">
-                            <div class="w-32 text-right font-mono text-sm text-slate-700 truncate">group by</div>
-                            <div class="flex-1 h-6 bg-slate-100 rounded-full overflow-hidden flex items-center">
-                                <div class="h-full bg-blue-400" style="width: 45%"></div>
-                            </div>
-                            <div class="w-12 text-sm font-bold text-slate-600">0.45</div>
-                            <div class="w-48 text-xs text-slate-400 hidden md:block truncate">聚合操作，代表查询模式</div>
-                        </div>
-
-                        <!-- Weight Item 5 -->
-                        <div class="flex items-center gap-4">
-                            <div class="w-32 text-right font-mono text-sm text-slate-700 truncate">count</div>
-                            <div class="flex-1 h-6 bg-slate-100 rounded-full overflow-hidden flex items-center">
-                                <div class="h-full bg-slate-300" style="width: 30%"></div>
-                            </div>
-                            <div class="w-12 text-sm font-bold text-slate-600">0.30</div>
-                            <div class="w-48 text-xs text-slate-400 hidden md:block truncate">常见聚合函数</div>
-                        </div>
-
-                        <!-- Weight Item 6 -->
-                        <div class="flex items-center gap-4">
-                            <div class="w-32 text-right font-mono text-sm text-slate-700 truncate">select</div>
-                            <div class="flex-1 h-6 bg-slate-100 rounded-full overflow-hidden flex items-center">
-                                <div class="h-full bg-slate-300" style="width: 5%"></div>
-                            </div>
-                            <div class="w-12 text-sm font-bold text-slate-600">0.05</div>
-                            <div class="w-48 text-xs text-slate-400 hidden md:block truncate">几乎所有查询都有，毫无区分度</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 步骤 3：聚类分析 -->
-            <div id="step-3" class="fade-in space-y-6 hidden">
-                <div class="bg-amber-50 p-4 rounded-lg border border-amber-100 mb-6">
-                    <h3 class="font-bold text-amber-800 flex items-center gap-2 mb-2">
-                        <i class="fa-solid fa-project-diagram"></i> 核心动作：K-Means 聚类 (物以类聚)
-                    </h3>
-                    <p class="text-sm text-amber-600">
-                        有了上一步的权重向量，AI 把几万种 SQL 模板扔进高维空间。特征相似的 SQL 会在空间中靠在一起，形成一个“簇(Cluster)”。
-                        这样，DBA 只要优化这一个“簇”，就能解决线上 30% 的性能问题。
-                    </p>
-                </div>
-
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 relative">
-                    <!-- Cluster 1 -->
-                    <div class="bg-white p-5 rounded-xl border-2 border-emerald-400 shadow-md transform hover:-translate-y-1 transition-transform cursor-default">
-                        <div class="flex items-center gap-2 mb-3">
-                            <div class="w-3 h-3 rounded-full bg-emerald-500"></div>
-                            <h4 class="font-bold text-slate-800 text-sm">Cluster A (你的 SQL)</h4>
-                        </div>
-                        <div class="text-xs text-slate-500 mb-2">特征标签: question_id, user_answer, group by</div>
-                        <div class="text-[10px] font-mono bg-emerald-50 text-emerald-700 p-2 rounded break-all">
-                            select ... group by question_id, user_answer
-                        </div>
-                        <div class="mt-3 text-xs font-bold text-emerald-600 bg-emerald-100 px-2 py-1 rounded inline-block">
-                            占总慢查询: 45% (高频!)
-                        </div>
-                    </div>
-
-                    <!-- Cluster 2 -->
-                    <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm opacity-70">
-                        <div class="flex items-center gap-2 mb-3">
-                            <div class="w-3 h-3 rounded-full bg-blue-500"></div>
-                            <h4 class="font-bold text-slate-800 text-sm">Cluster B</h4>
-                        </div>
-                        <div class="text-xs text-slate-500 mb-2">特征标签: app_id, subject_id, part_id</div>
-                        <div class="text-[10px] font-mono bg-slate-50 text-slate-600 p-2 rounded break-all">
-                            select count(*) ... where app_id = ? ... group by part_id
-                        </div>
-                        <div class="mt-3 text-xs font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded inline-block">
-                            占总慢查询: 20%
-                        </div>
-                    </div>
-
-                    <!-- Cluster 3 -->
-                    <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm opacity-70">
-                        <div class="flex items-center gap-2 mb-3">
-                            <div class="w-3 h-3 rounded-full bg-slate-400"></div>
-                            <h4 class="font-bold text-slate-800 text-sm">Cluster C</h4>
-                        </div>
-                        <div class="text-xs text-slate-500 mb-2">特征标签: insert, values</div>
-                        <div class="text-[10px] font-mono bg-slate-50 text-slate-600 p-2 rounded break-all">
-                            insert into yjy_user_answer_log ...
-                        </div>
-                        <div class="mt-3 text-xs font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded inline-block">
-                            占总慢查询: 5%
-                        </div>
-                    </div>
-                </div>
+        </div>
+        
+        <!-- 分组式进度指示器 -->
+        <div class="max-w-6xl mx-auto px-4 pb-4 overflow-x-auto no-scrollbar">
+            <div class="flex gap-3 min-w-max items-stretch">
                 
-                <div class="text-center mt-6 text-sm text-slate-600 bg-slate-100 p-4 rounded-lg border border-slate-200">
-                    💡 <strong>结论：</strong>因为你的 SQL 被聚类识别为 <strong>Cluster A (占比45%)</strong> 的典型代表，所以你针对它建立 <code>Projection 1</code>，是一次收益极高的优化！
+                <!-- Group 1: 机器学习 (左脑) -->
+                <div class="flex flex-col border border-blue-200 rounded-xl p-2 bg-gradient-to-b from-blue-50/50 to-transparent">
+                    <div class="text-[11px] font-black text-blue-600 mb-2 px-2 flex items-center gap-1 tracking-wider">
+                        <i class="fa-solid fa-brain"></i> 统计机器学习引擎 (左脑)
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="nav-tab whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition-all border cursor-pointer flex items-center gap-1" onclick="goToStep(1)">
+                            <span class="opacity-60">1.</span> SQL 归一化 <span class="bg-blue-100/50 text-blue-500 border border-blue-200 text-[9px] px-1.5 py-0.5 rounded-md ml-1 hidden sm:inline-block">特征</span>
+                        </button>
+                        <button class="nav-tab whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition-all border cursor-pointer flex items-center gap-1" onclick="goToStep(2)">
+                            <span class="opacity-60">2.</span> TF-IDF <span class="bg-blue-100/50 text-blue-500 border border-blue-200 text-[9px] px-1.5 py-0.5 rounded-md ml-1 hidden sm:inline-block">特征</span>
+                        </button>
+                        <button class="nav-tab whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition-all border cursor-pointer flex items-center gap-1" onclick="goToStep(3)">
+                            <span class="opacity-60">3.</span> SVD 降维 <span class="bg-blue-100/50 text-blue-500 border border-blue-200 text-[9px] px-1.5 py-0.5 rounded-md ml-1 hidden sm:inline-block">特征</span>
+                        </button>
+                        <button class="nav-tab whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition-all border cursor-pointer flex items-center gap-1" onclick="goToStep(4)">
+                            <span class="opacity-60">4.</span> K-Means <span class="bg-amber-100/50 text-amber-600 border border-amber-200 text-[9px] px-1.5 py-0.5 rounded-md ml-1 hidden sm:inline-block">算法</span>
+                        </button>
+                        <button class="nav-tab whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition-all border cursor-pointer flex items-center gap-1" onclick="goToStep(5)">
+                            <span class="opacity-60">5.</span> Silhouette <span class="bg-orange-100/50 text-orange-600 border border-orange-200 text-[9px] px-1.5 py-0.5 rounded-md ml-1 hidden sm:inline-block">评估</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Group 2: 深度学习 (右脑) -->
+                <div class="flex flex-col border border-rose-200 rounded-xl p-2 bg-gradient-to-b from-rose-50/50 to-transparent">
+                    <div class="text-[11px] font-black text-rose-600 mb-2 px-2 flex items-center gap-1 tracking-wider">
+                        <i class="fa-solid fa-network-wired"></i> 深度学习引擎 (右脑)
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="nav-tab whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition-all border cursor-pointer flex items-center gap-1" onclick="goToStep(6)">
+                            <span class="opacity-60">6.</span> 自编码器 <span class="bg-red-100/50 text-red-600 border border-red-200 text-[9px] px-1.5 py-0.5 rounded-md ml-1 hidden sm:inline-block">算法</span>
+                        </button>
+                        <button class="nav-tab whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition-all border cursor-pointer flex items-center gap-1" onclick="goToStep(7)">
+                            <span class="opacity-60">7.</span> 异常打分 <span class="bg-rose-100/50 text-rose-600 border border-rose-200 text-[9px] px-1.5 py-0.5 rounded-md ml-1 hidden sm:inline-block">评估</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Group 3: 综合 -->
+                <div class="flex flex-col border border-indigo-200 rounded-xl p-2 bg-gradient-to-b from-indigo-50/50 to-transparent">
+                    <div class="text-[11px] font-black text-indigo-600 mb-2 px-2 flex items-center gap-1 tracking-wider">
+                        <i class="fa-solid fa-gavel"></i> 综合输出
+                    </div>
+                    <div class="flex gap-2 h-full">
+                        <button class="nav-tab whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition-all border cursor-pointer h-full flex items-center gap-1" onclick="goToStep(8)">
+                            <span class="opacity-60">8.</span> 双模型融合
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </header>
+
+    <!-- 幻灯片主内容区 -->
+    <main class="flex-1 w-full max-w-6xl mx-auto p-4 sm:p-6 flex flex-col relative">
+        <div id="slides-container" class="relative w-full h-full">
+            
+            <!-- ① SQL归一化 -->
+            <div class="slide hidden" id="slide-1">
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="bg-blue-50 p-5 border-b border-blue-100 flex justify-between items-start">
+                        <div>
+                            <h2 class="text-xl font-bold flex items-center gap-2 text-blue-800">
+                                <i class="fa-solid fa-filter"></i> 核心动作：抹去变量，提取 SQL 指纹
+                            </h2>
+                            <p class="text-sm text-blue-600 mt-2">
+                                把海量长得不一样、但业务逻辑完全相同的 SQL 提取出统一的模板骨架。
+                            </p>
+                        </div>
+                        <div class="hidden sm:flex items-center gap-1 bg-white border border-blue-200 text-blue-600 text-xs font-bold px-3 py-1.5 rounded-full shadow-sm">
+                            <i class="fa-solid fa-wrench"></i> 特征工程
+                        </div>
+                    </div>
+                    <div class="p-6 space-y-6">
+                        <!-- 内容与之前相同 -->
+                        <div class="flex flex-col sm:flex-row items-stretch gap-6">
+                            <div class="flex-1 border border-slate-200 rounded-lg bg-slate-50 p-4">
+                                <div class="text-sm font-bold text-slate-500 mb-3 border-b pb-2">原始慢查询日志 (每秒数千条)</div>
+                                <div class="space-y-3">
+                                    <div class="bg-white p-3 rounded border border-slate-200 sql-box text-xs shadow-sm text-slate-600">select * from yjy_user_answer_log where question_id = <span class="bg-yellow-100 text-yellow-800 font-bold px-1 border border-yellow-300 rounded">377488</span></div>
+                                    <div class="bg-white p-3 rounded border border-slate-200 sql-box text-xs shadow-sm text-slate-600">SELECT * FROM yjy_user_answer_log WHERE question_id = <span class="bg-yellow-100 text-yellow-800 font-bold px-1 border border-yellow-300 rounded">991123</span></div>
+                                    <div class="bg-white p-3 rounded border border-slate-200 sql-box text-xs shadow-sm text-slate-600">select * from yjy_user_answer_log where question_id = <span class="bg-yellow-100 text-yellow-800 font-bold px-1 border border-yellow-300 rounded">1024</span></div>
+                                </div>
+                            </div>
+                            <div class="flex flex-col items-center justify-center text-blue-400">
+                                <div class="bg-blue-50 border border-blue-200 text-blue-600 text-xs font-bold px-3 py-1 rounded-full mb-2">Regex / AST 解析</div>
+                                <i class="fa-solid fa-arrow-right-long text-2xl hidden sm:block"></i>
+                                <i class="fa-solid fa-arrow-down-long text-2xl sm:hidden"></i>
+                            </div>
+                            <div class="flex-1 border border-emerald-200 rounded-lg bg-emerald-50 p-4 flex flex-col justify-center">
+                                <div class="text-sm font-bold text-emerald-700 mb-3 border-b border-emerald-200 pb-2">SQL 指纹模板 (唯一)</div>
+                                <div class="bg-white p-5 rounded-lg border-2 border-emerald-400 sql-box text-sm shadow-md text-slate-700 leading-relaxed">
+                                    select * <br>from yjy_user_answer_log <br>where question_id = <span class="bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 border border-emerald-400 rounded mx-1">?</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-slate-50 border border-slate-200 p-4 rounded-lg text-slate-600 text-sm flex items-start gap-3">
+                            <i class="fa-solid fa-check-circle text-emerald-500 mt-0.5 text-lg"></i>
+                            <div><strong>业务收益：</strong> 将 1000 万条零散的慢查询日志，瞬间压缩成 500 种基础模板，极大降低了 DBA 的排查噪音。</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ② TF-IDF -->
+            <div class="slide hidden" id="slide-2">
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="bg-purple-50 p-5 border-b border-purple-100 flex justify-between items-start">
+                        <div>
+                            <h2 class="text-xl font-bold flex items-center gap-2 text-purple-800">
+                                <i class="fa-solid fa-chart-bar"></i> 核心动作：词频-逆文档频率 (权重提取)
+                            </h2>
+                            <p class="text-sm text-purple-600 mt-2">
+                                找出 SQL 模板中最具“业务辨识度”的核心关键词，忽略常规语法词。
+                            </p>
+                        </div>
+                        <div class="hidden sm:flex items-center gap-1 bg-white border border-purple-200 text-purple-600 text-xs font-bold px-3 py-1.5 rounded-full shadow-sm">
+                            <i class="fa-solid fa-wrench"></i> 特征工程
+                        </div>
+                    </div>
+                    <div class="p-6 space-y-6">
+                        <!-- 内容保持原样 -->
+                        <div class="bg-slate-50 p-4 rounded-lg border border-slate-200 font-mono text-sm text-slate-600 break-all shadow-inner">
+                            select question_id, user_answer, count(*) as count from yjy_user_answer_log where question_id in (?) group by question_id, user_answer
+                        </div>
+                        <div class="border border-slate-200 rounded-lg p-5">
+                            <h3 class="font-bold text-slate-600 mb-5 text-sm border-b pb-2">特征词权重分布 (Vector Weights)</h3>
+                            <div class="space-y-4">
+                                <!-- Items -->
+                                <div class="flex items-center gap-4">
+                                    <div class="w-32 text-right font-mono text-sm text-slate-700 truncate">question_id</div>
+                                    <div class="flex-1 h-5 bg-slate-100 rounded-full overflow-hidden">
+                                        <div class="h-full bg-purple-500 rounded-full" style="width: 85%"></div>
+                                    </div>
+                                    <div class="w-12 text-sm font-bold text-slate-700">0.85</div>
+                                    <div class="w-48 text-xs text-slate-500 hidden md:block truncate">业务核心字段，区分度极高</div>
+                                </div>
+                                <div class="flex items-center gap-4">
+                                    <div class="w-32 text-right font-mono text-sm text-slate-700 truncate">user_answer</div>
+                                    <div class="flex-1 h-5 bg-slate-100 rounded-full overflow-hidden">
+                                        <div class="h-full bg-purple-500 rounded-full" style="width: 78%"></div>
+                                    </div>
+                                    <div class="w-12 text-sm font-bold text-slate-700">0.78</div>
+                                    <div class="w-48 text-xs text-slate-500 hidden md:block truncate">业务核心字段，区分度高</div>
+                                </div>
+                                <div class="flex items-center gap-4">
+                                    <div class="w-32 text-right font-mono text-sm text-slate-700 truncate">yjy_user_answer...</div>
+                                    <div class="flex-1 h-5 bg-slate-100 rounded-full overflow-hidden">
+                                        <div class="h-full bg-purple-500 rounded-full" style="width: 65%"></div>
+                                    </div>
+                                    <div class="w-12 text-sm font-bold text-slate-700">0.65</div>
+                                    <div class="w-48 text-xs text-slate-500 hidden md:block truncate">表名，限定了业务域</div>
+                                </div>
+                                <div class="flex items-center gap-4">
+                                    <div class="w-32 text-right font-mono text-sm text-slate-700 truncate">group by</div>
+                                    <div class="flex-1 h-5 bg-slate-100 rounded-full overflow-hidden">
+                                        <div class="h-full bg-blue-400 rounded-full" style="width: 45%"></div>
+                                    </div>
+                                    <div class="w-12 text-sm font-bold text-slate-700">0.45</div>
+                                    <div class="w-48 text-xs text-slate-500 hidden md:block truncate">聚合操作，代表查询模式</div>
+                                </div>
+                                <div class="flex items-center gap-4">
+                                    <div class="w-32 text-right font-mono text-sm text-slate-400 truncate">select</div>
+                                    <div class="flex-1 h-5 bg-slate-100 rounded-full overflow-hidden">
+                                        <div class="h-full bg-slate-300 rounded-full" style="width: 5%"></div>
+                                    </div>
+                                    <div class="w-12 text-sm font-bold text-slate-400">0.05</div>
+                                    <div class="w-48 text-xs text-slate-400 hidden md:block truncate">到处都是，毫无区分度</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-slate-50 border border-slate-200 p-4 rounded-lg text-slate-600 text-sm flex items-start gap-3">
+                            <i class="fa-solid fa-check-circle text-purple-500 mt-0.5 text-lg"></i>
+                            <div><strong>业务收益：</strong> AI 成功将文本型的 SQL，转化成了带有重要性权重的数字向量，为后续的数学计算打下基础。</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ③ TruncatedSVD -->
+            <div class="slide hidden" id="slide-3">
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="bg-cyan-50 p-5 border-b border-cyan-100 flex justify-between items-start">
+                        <div>
+                            <h2 class="text-xl font-bold flex items-center gap-2 text-cyan-800">
+                                <i class="fa-solid fa-compress"></i> 核心动作：特征降维 (TruncatedSVD)
+                            </h2>
+                            <p class="text-sm text-cyan-600 mt-2">
+                                剔除边缘表和冷门字段，将极其庞大且稀疏的矩阵，压缩成高密度的核心特征向量。
+                            </p>
+                        </div>
+                        <div class="hidden sm:flex items-center gap-1 bg-white border border-cyan-200 text-cyan-600 text-xs font-bold px-3 py-1.5 rounded-full shadow-sm">
+                            <i class="fa-solid fa-wrench"></i> 特征工程
+                        </div>
+                    </div>
+                    <div class="p-6 space-y-6">
+                        <!-- 内容保持原样 -->
+                        <div class="flex flex-col sm:flex-row items-center gap-4 bg-slate-50 p-6 rounded-lg border border-slate-200">
+                            <div class="flex-1 text-center w-full">
+                                <div class="text-sm font-bold text-slate-600 mb-2">原始词汇表表矩阵 <span class="text-xs font-normal text-slate-400">(~10,000维)</span></div>
+                                <div class="bg-white border border-slate-200 p-4 rounded-lg grid grid-cols-8 gap-1 opacity-70">
+                                    <script>for(let i=0;i<48;i++) document.write(`<div class="h-3 rounded-sm ${Math.random() > 0.85 ? 'bg-cyan-400' : 'bg-slate-100'}"></div>`);</script>
+                                </div>
+                                <div class="text-xs text-slate-400 mt-2">包含所有表名、字段名、语法词<br>包含大量 0 (极度稀疏)</div>
+                            </div>
+                            <div class="flex flex-col items-center">
+                                <div class="bg-cyan-100 text-cyan-700 text-xs font-bold px-3 py-1 rounded-full mb-2 border border-cyan-200">SVD 矩阵分解</div>
+                                <i class="fa-solid fa-arrow-right-long text-2xl text-cyan-400 hidden sm:block"></i>
+                            </div>
+                            <div class="flex-1 text-center w-full">
+                                <div class="text-sm font-bold text-cyan-700 mb-2">密集语义向量 <span class="text-xs font-normal text-cyan-600">(128维)</span></div>
+                                <div class="bg-cyan-50 border border-cyan-200 p-4 rounded-lg grid grid-cols-4 gap-2">
+                                    <script>for(let i=0;i<16;i++) document.write(`<div class="h-4 rounded bg-cyan-${Math.floor(Math.random() * 4) * 100 + 300}"></div>`);</script>
+                                </div>
+                                <div class="text-xs text-cyan-600 mt-2">提炼出的 128 个核心数学特征<br>信息保留率 > 90%</div>
+                            </div>
+                        </div>
+                        <div class="bg-slate-50 border border-slate-200 p-4 rounded-lg text-slate-600 text-sm flex items-start gap-3">
+                            <i class="fa-solid fa-check-circle text-cyan-500 mt-0.5 text-lg"></i>
+                            <div><strong>业务收益：</strong> 大幅降低了后续算法的计算量，让监控报警系统的计算耗时从“分钟级”降到了“秒级”。</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ④ KMeans -->
+            <div class="slide hidden" id="slide-4">
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="bg-amber-50 p-5 border-b border-amber-100 flex justify-between items-start">
+                        <div>
+                            <h2 class="text-xl font-bold flex items-center gap-2 text-amber-800">
+                                <i class="fa-solid fa-layer-group"></i> 核心动作：K-Means 聚类 (物以类聚)
+                            </h2>
+                            <p class="text-sm text-amber-600 mt-2">
+                                将高维空间中“特征相似”的 SQL 靠拢，形成一个个具备特定业务含义的“簇 (Cluster)”。
+                            </p>
+                        </div>
+                        <div class="hidden sm:flex items-center gap-1 bg-white border border-amber-200 text-amber-600 text-xs font-bold px-3 py-1.5 rounded-full shadow-sm">
+                            <i class="fa-solid fa-gear"></i> 核心算法
+                        </div>
+                    </div>
+                    <div class="p-6 space-y-6">
+                        <!-- 内容保持原样 -->
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <!-- Cluster A -->
+                            <div class="border-2 border-emerald-400 bg-emerald-50 rounded-xl p-4 shadow-md relative overflow-hidden">
+                                <div class="absolute top-0 right-0 bg-emerald-500 text-white text-xs font-bold px-3 py-1 rounded-bl-lg shadow-sm">Target 🎯</div>
+                                <div class="flex items-center gap-2 mb-3">
+                                    <div class="w-2.5 h-2.5 rounded-full bg-emerald-500"></div>
+                                    <h3 class="font-bold text-slate-800 text-sm">Cluster A (你的 SQL)</h3>
+                                </div>
+                                <div class="text-xs text-slate-500 mb-2 truncate">特征标签: question_id, user_answer</div>
+                                <div class="font-mono text-[10px] bg-white border border-emerald-200 text-emerald-800 p-2 rounded mb-3">
+                                    select ... group by question_id, user_answer
+                                </div>
+                                <div class="inline-block bg-emerald-100 text-emerald-700 text-xs font-bold px-2 py-1 rounded">
+                                    占总慢查询: 45% (极高频!)
+                                </div>
+                            </div>
+                            <!-- Cluster B -->
+                            <div class="border border-slate-200 bg-white rounded-xl p-4 shadow-sm opacity-80">
+                                <div class="flex items-center gap-2 mb-3">
+                                    <div class="w-2.5 h-2.5 rounded-full bg-blue-500"></div>
+                                    <h3 class="font-bold text-slate-700 text-sm">Cluster B</h3>
+                                </div>
+                                <div class="text-xs text-slate-500 mb-2 truncate">特征标签: app_id, subject_id, part_id</div>
+                                <div class="font-mono text-[10px] bg-slate-50 border border-slate-100 text-slate-600 p-2 rounded mb-3">
+                                    select count(*) ... where app_id = ? ...
+                                </div>
+                                <div class="inline-block bg-slate-100 text-slate-500 text-xs font-bold px-2 py-1 rounded">
+                                    占总慢查询: 20%
+                                </div>
+                            </div>
+                            <!-- Cluster C -->
+                            <div class="border border-slate-200 bg-white rounded-xl p-4 shadow-sm opacity-60">
+                                <div class="flex items-center gap-2 mb-3">
+                                    <div class="w-2.5 h-2.5 rounded-full bg-slate-400"></div>
+                                    <h3 class="font-bold text-slate-700 text-sm">Cluster C</h3>
+                                </div>
+                                <div class="text-xs text-slate-500 mb-2 truncate">特征标签: insert, values</div>
+                                <div class="font-mono text-[10px] bg-slate-50 border border-slate-100 text-slate-600 p-2 rounded mb-3">
+                                    insert into yjy_user_answer_log ...
+                                </div>
+                                <div class="inline-block bg-slate-100 text-slate-500 text-xs font-bold px-2 py-1 rounded">
+                                    占总慢查询: 5%
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-slate-50 border border-slate-200 p-4 rounded-lg text-slate-600 text-sm flex items-start gap-3">
+                            <i class="fa-solid fa-lightbulb text-amber-500 mt-0.5 text-lg"></i>
+                            <div><strong>结论：</strong> 因为这批 SQL 被聚类识别为 <strong>Cluster A (占比45%)</strong> 的典型代表，DBA 只要针对该簇的特征建立特定的 Projection，就能一次性解决线上近一半的性能问题！</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ⑤ Silhouette Score -->
+            <div class="slide hidden" id="slide-5">
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="bg-orange-50 p-5 border-b border-orange-100 flex justify-between items-start">
+                        <div>
+                            <h2 class="text-xl font-bold flex items-center gap-2 text-orange-800">
+                                <i class="fa-solid fa-ruler-combined"></i> 核心动作：聚类质量评分 (Silhouette)
+                            </h2>
+                            <p class="text-sm text-orange-600 mt-2">
+                                衡量“簇内是否紧密、簇间是否分离”。防止 K-Means 把风马牛不相及的业务 SQL 强行分在同一个篮子里。
+                            </p>
+                        </div>
+                        <div class="hidden sm:flex items-center gap-1 bg-white border border-orange-200 text-orange-600 text-xs font-bold px-3 py-1.5 rounded-full shadow-sm">
+                            <i class="fa-solid fa-star-half-stroke"></i> 评估指标
+                        </div>
+                    </div>
+                    <div class="p-6 space-y-6">
+                        <!-- 内容保持原样 -->
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            <!-- K=2 太粗 -->
+                            <div class="border border-slate-200 rounded-lg p-4 bg-slate-50">
+                                <div class="text-sm font-bold text-slate-600 mb-2 text-center">K = 2 (分得太粗)</div>
+                                <div class="bg-white border border-rose-200 rounded p-2 mb-3 space-y-1">
+                                    <div class="text-[10px] bg-rose-50 text-rose-700 p-1 rounded font-mono truncate">select count(question_id)...</div>
+                                    <div class="text-[10px] bg-blue-50 text-blue-700 p-1 rounded font-mono truncate">insert into user_logs...</div>
+                                    <div class="text-xs text-rose-500 font-bold mt-1 text-center"><i class="fa-solid fa-xmark"></i> 查询和写入混在一起</div>
+                                </div>
+                                <div class="flex justify-between items-center text-sm border-t pt-2">
+                                    <span class="text-slate-500">轮廓系数</span>
+                                    <span class="font-bold text-slate-700">0.21</span>
+                                </div>
+                            </div>
+                            <!-- K=5 合适 -->
+                            <div class="border-2 border-orange-400 rounded-lg p-4 bg-orange-50 shadow-md relative">
+                                <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-orange-500 text-white text-[10px] px-2 py-0.5 rounded-full shadow">最佳 K 值 ⭐</div>
+                                <div class="text-sm font-bold text-orange-700 mb-2 text-center">K = 5 (粒度刚好)</div>
+                                <div class="space-y-2 mb-3">
+                                    <div class="bg-white border border-emerald-200 rounded p-2">
+                                        <div class="text-[10px] bg-emerald-50 text-emerald-700 p-1 rounded font-mono truncate">select ... group by question_id</div>
+                                    </div>
+                                    <div class="bg-white border border-blue-200 rounded p-2">
+                                        <div class="text-[10px] bg-blue-50 text-blue-700 p-1 rounded font-mono truncate">insert into user_logs...</div>
+                                    </div>
+                                </div>
+                                <div class="text-xs text-emerald-600 font-bold mb-2 text-center"><i class="fa-solid fa-check"></i> 业务边界清晰分离</div>
+                                <div class="flex justify-between items-center text-sm border-t border-orange-200 pt-2">
+                                    <span class="text-orange-600">轮廓系数</span>
+                                    <span class="font-black text-orange-700 text-lg">0.82</span>
+                                </div>
+                            </div>
+                            <!-- K=50 太细 -->
+                            <div class="border border-slate-200 rounded-lg p-4 bg-slate-50">
+                                <div class="text-sm font-bold text-slate-600 mb-2 text-center">K = 50 (分得太碎)</div>
+                                <div class="space-y-2 mb-3">
+                                    <div class="bg-white border border-slate-200 rounded p-2">
+                                        <div class="text-[10px] bg-slate-100 text-slate-600 p-1 rounded font-mono truncate">select ... where app_id=1</div>
+                                    </div>
+                                    <div class="bg-white border border-slate-200 rounded p-2">
+                                        <div class="text-[10px] bg-slate-100 text-slate-600 p-1 rounded font-mono truncate">select ... where app_id=2</div>
+                                    </div>
+                                </div>
+                                <div class="text-xs text-slate-500 font-bold mb-2 text-center"><i class="fa-solid fa-minus"></i> 相同的逻辑强行拆散</div>
+                                <div class="flex justify-between items-center text-sm border-t pt-2">
+                                    <span class="text-slate-500">轮廓系数</span>
+                                    <span class="font-bold text-slate-700">0.15</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-slate-50 border border-slate-200 p-4 rounded-lg text-slate-600 text-sm flex items-start gap-3">
+                            <i class="fa-solid fa-check-circle text-orange-500 mt-0.5 text-lg"></i>
+                            <div><strong>业务收益：</strong> 算法全自动寻找评分最高的分组数 (K)。告别人工拍脑袋，确保分出来的每一类 SQL 在业务上都是高度内聚的。</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ⑥ PyTorch 自编码器 -->
+            <div class="slide hidden" id="slide-6">
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="bg-red-50 p-5 border-b border-red-100 flex justify-between items-start">
+                        <div>
+                            <h2 class="text-xl font-bold flex items-center gap-2 text-red-800">
+                                <i class="fa-solid fa-brain"></i> 核心动作：深层语义学习 (Autoencoder)
+                            </h2>
+                            <p class="text-sm text-red-600 mt-2">
+                                除了看字面量，让 AI 通过“压缩和重建”，学习线上几十万条正常 SQL 的表连接规律。
+                            </p>
+                        </div>
+                        <div class="hidden sm:flex items-center gap-1 bg-white border border-red-200 text-red-600 text-xs font-bold px-3 py-1.5 rounded-full shadow-sm">
+                            <i class="fa-solid fa-wrench"></i><i class="fa-solid fa-gear"></i> 特征 & 算法
+                        </div>
+                    </div>
+                    <div class="p-6 space-y-6">
+                        <!-- 内容保持原样 -->
+                        <div class="bg-slate-50 p-8 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+                            <div class="flex-1 w-full text-center">
+                                <div class="text-sm font-bold text-slate-600 mb-2">线上正常 SQL (输入)</div>
+                                <div class="bg-white p-3 border border-slate-200 rounded shadow-sm text-[10px] font-mono text-slate-600 break-all text-left h-16 overflow-hidden relative">
+                                    SELECT count(*) FROM yjy_user_answer_log WHERE question_id=? GROUP BY user_answer
+                                    <div class="absolute bottom-0 left-0 w-full h-4 bg-gradient-to-t from-white to-transparent"></div>
+                                </div>
+                            </div>
+                            <div class="flex flex-col items-center">
+                                <i class="fa-solid fa-arrow-right text-slate-400 mb-1 hidden sm:block"></i>
+                                <div class="bg-red-100 text-red-700 text-xs font-bold px-3 py-1 rounded-full border border-red-200">Encoder网络</div>
+                            </div>
+                            <div class="flex-1 w-full text-center">
+                                <div class="text-sm font-bold text-purple-700 mb-2">潜在语义 (Latent Space)</div>
+                                <div class="bg-purple-50 p-2 border border-purple-200 rounded shadow-sm text-[10px] font-mono text-purple-700 flex flex-wrap justify-center gap-1">
+                                    <span class="bg-white px-1 rounded">[0.12,</span><span class="bg-white px-1 rounded">-0.45,</span><span class="bg-white px-1 rounded">0.88]</span>
+                                </div>
+                                <div class="text-[10px] text-purple-500 mt-1">深度特征提取</div>
+                            </div>
+                            <div class="flex flex-col items-center">
+                                <div class="bg-red-100 text-red-700 text-xs font-bold px-3 py-1 rounded-full border border-red-200 mb-1">Decoder网络</div>
+                                <i class="fa-solid fa-arrow-right text-slate-400 hidden sm:block"></i>
+                            </div>
+                            <div class="flex-1 w-full text-center">
+                                <div class="text-sm font-bold text-emerald-700 mb-2">重建的 SQL (输出)</div>
+                                <div class="bg-emerald-50 p-3 border border-emerald-200 rounded shadow-sm text-[10px] font-mono text-emerald-800 break-all text-left h-16 overflow-hidden">
+                                    SELECT count(*) FROM yjy_user_answer_log WHERE question_id=? GROUP BY user_answer
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-slate-50 border border-slate-200 p-4 rounded-lg text-slate-600 text-sm flex items-start gap-3">
+                            <i class="fa-solid fa-check-circle text-red-500 mt-0.5 text-lg"></i>
+                            <div><strong>业务收益：</strong> AI 通过不断比对“输入”和“输出”，掌握了数据库的“正常运作模式”（比如通常怎么做 JOIN）。</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ⑦ Reconstruction Error -->
+            <div class="slide hidden" id="slide-7">
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="bg-rose-50 p-5 border-b border-rose-100 flex justify-between items-start">
+                        <div>
+                            <h2 class="text-xl font-bold flex items-center gap-2 text-rose-800">
+                                <i class="fa-solid fa-triangle-exclamation"></i> 核心动作：异常分数打分 (Error)
+                            </h2>
+                            <p class="text-sm text-rose-600 mt-2">
+                                利用学好的 Autoencoder，把未知的 SQL 丢进去。重建误差越大的 SQL，往往就是拖垮系统的“怪胎”。
+                            </p>
+                        </div>
+                        <div class="hidden sm:flex items-center gap-1 bg-white border border-rose-200 text-rose-600 text-xs font-bold px-3 py-1.5 rounded-full shadow-sm">
+                            <i class="fa-solid fa-star-half-stroke"></i> 评估指标
+                        </div>
+                    </div>
+                    <div class="p-6 space-y-6">
+                        <!-- 内容保持原样 -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div class="border border-emerald-200 bg-emerald-50 rounded-xl p-5 relative">
+                                <div class="absolute -top-3 -right-3 bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs px-2 py-1 rounded shadow-sm"><i class="fa-solid fa-check"></i> 正常查询</div>
+                                <div class="text-sm font-bold text-slate-700 mb-3">输入：常规的单表聚合</div>
+                                <div class="bg-white p-2 rounded border border-emerald-200 text-[10px] font-mono text-slate-600 mb-3">SELECT sum(time) FROM logs WHERE id=?</div>
+                                
+                                <div class="flex items-center gap-2 text-emerald-600 text-xs font-bold mb-3">
+                                    <i class="fa-solid fa-arrow-down"></i> 网络可以完美重建
+                                </div>
+                                <div class="bg-emerald-100/50 p-2 rounded border border-emerald-200 text-[10px] font-mono text-emerald-800 mb-4">SELECT sum(time) FROM logs WHERE id=?</div>
+                                
+                                <div class="flex items-center justify-between border-t border-emerald-200 pt-3">
+                                    <span class="text-emerald-700 text-sm font-bold">重建误差分 (异常度)</span>
+                                    <span class="text-2xl font-black text-emerald-600">0.012</span>
+                                </div>
+                            </div>
+                            <div class="border-2 border-rose-300 bg-rose-50 rounded-xl p-5 relative shadow-md">
+                                <div class="absolute -top-3 -right-3 bg-rose-500 text-white text-xs font-bold px-3 py-1 rounded shadow animate-pulse"><i class="fa-solid fa-bug"></i> 烂 SQL 告警</div>
+                                <div class="text-sm font-bold text-slate-700 mb-3">输入：全表扫描 / 错误的 JOIN</div>
+                                <div class="bg-white p-2 rounded border border-rose-200 text-[10px] font-mono text-slate-600 mb-3">SELECT * FROM logs a, users b (缺失 ON)</div>
+                                
+                                <div class="flex items-center gap-2 text-rose-500 text-xs font-bold mb-3">
+                                    <i class="fa-solid fa-arrow-down"></i> 遇到知识盲区，重建出一堆乱码
+                                </div>
+                                <div class="bg-rose-100/50 p-2 rounded border border-rose-200 text-[10px] font-mono text-rose-800 mb-4 opacity-70">SELECT count, id FROM a JOIN logs WHERE ???</div>
+                                
+                                <div class="flex items-center justify-between border-t border-rose-200 pt-3">
+                                    <span class="text-rose-700 text-sm font-bold">重建误差分 (异常度)</span>
+                                    <span class="text-3xl font-black text-rose-600">0.985</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-slate-50 border border-slate-200 p-4 rounded-lg text-slate-600 text-sm flex items-start gap-3">
+                            <i class="fa-solid fa-lightbulb text-rose-500 mt-0.5 text-lg"></i>
+                            <div><strong>结论：</strong> 这个异常分数越高，说明该 SQL 的写法越不合群、越具有破坏性。SRE 收到高分告警，可直接定位到具体研发进行整改。</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ⑧ 双模型融合 -->
+            <div class="slide hidden" id="slide-8">
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="bg-indigo-50 p-5 border-b border-indigo-100 flex justify-between items-start">
+                        <div>
+                            <h2 class="text-xl font-bold flex items-center gap-2 text-indigo-800">
+                                <i class="fa-solid fa-gavel"></i> 核心动作：双引擎决策融合
+                            </h2>
+                            <p class="text-sm text-indigo-600 mt-2">
+                                将两套模型的结论与业务运行指标结合，生成最终的数据库优化实施建议。
+                            </p>
+                        </div>
+                        <div class="hidden sm:flex items-center gap-1 bg-white border border-indigo-200 text-indigo-600 text-xs font-bold px-3 py-1.5 rounded-full shadow-sm">
+                            <i class="fa-solid fa-flag-checkered"></i> 业务决策
+                        </div>
+                    </div>
+                    <div class="p-6 space-y-6">
+                        <!-- 内容保持原样 -->
+                        <div class="bg-slate-50 border border-slate-200 rounded-xl p-6">
+                            <div class="flex items-center justify-center gap-8 mb-8 pb-8 border-b border-slate-200">
+                                <div class="text-center">
+                                    <div class="text-xs font-bold text-slate-500 mb-1">左脑 (K-Means 聚类)</div>
+                                    <div class="bg-blue-100 text-blue-800 px-3 py-1 rounded text-sm font-bold border border-blue-200">推荐优化: Cluster A</div>
+                                </div>
+                                <div class="flex flex-col items-center">
+                                    <div class="text-[10px] text-slate-400 mb-1">交叉验证一致率</div>
+                                    <div class="bg-emerald-100 text-emerald-700 font-bold px-3 py-1 rounded-full text-xs">96% 极高</div>
+                                </div>
+                                <div class="text-center">
+                                    <div class="text-xs font-bold text-slate-500 mb-1">右脑 (AutoEncoder)</div>
+                                    <div class="bg-rose-100 text-rose-800 px-3 py-1 rounded text-sm font-bold border border-rose-200">高危频发: Cluster A</div>
+                                </div>
+                            </div>
+                            <div class="text-center mb-6">
+                                <h3 class="text-sm font-bold text-slate-700 mb-4">结合真实业务监控数据计算 ROI (投资回报率)</h3>
+                                <div class="flex flex-wrap justify-center gap-4 text-sm">
+                                    <div class="bg-white border border-slate-200 p-3 rounded-lg flex-1 min-w-[120px]">
+                                        <div class="text-slate-500 text-xs mb-1">执行频次 (QPS)</div>
+                                        <div class="font-black text-slate-700 text-lg">15,000<span class="text-xs font-normal"> /s</span></div>
+                                    </div>
+                                    <div class="bg-white border border-slate-200 p-3 rounded-lg flex-1 min-w-[120px]">
+                                        <div class="text-slate-500 text-xs mb-1">平均耗时 (P99)</div>
+                                        <div class="font-black text-rose-600 text-lg">2.8<span class="text-xs font-normal"> s</span></div>
+                                    </div>
+                                    <div class="bg-white border border-slate-200 p-3 rounded-lg flex-1 min-w-[120px]">
+                                        <div class="text-slate-500 text-xs mb-1">CPU 消耗占比</div>
+                                        <div class="font-black text-rose-600 text-lg">38%</div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="flex justify-center"><i class="fa-solid fa-arrow-down text-slate-300 text-xl mb-4"></i></div>
+
+                            <div class="bg-gradient-to-r from-indigo-600 to-blue-600 text-white p-4 rounded-xl text-center shadow-lg relative overflow-hidden">
+                                <div class="absolute top-0 right-0 w-32 h-32 bg-white opacity-10 rounded-full -mr-10 -mt-10 blur-xl"></div>
+                                <div class="text-indigo-100 text-xs font-bold mb-1 tracking-wider uppercase">系统自动输出解决方案</div>
+                                <h3 class="text-xl font-bold flex justify-center items-center gap-2">
+                                    <i class="fa-solid fa-rocket"></i> 为 Cluster A 创建 PROJECTION (预聚合)
+                                </h3>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
         </div>
-    </div>
+    </main>
 
-    <!-- 交互逻辑控制 -->
+    <!-- 底部控制栏 -->
+    <footer class="bg-white border-t border-slate-200 p-4 sticky bottom-0 z-50">
+        <div class="max-w-6xl mx-auto flex items-center justify-between">
+            <button id="btn-prev" class="px-5 py-2 rounded font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition disabled:opacity-50 disabled:cursor-not-allowed text-sm">
+                <i class="fa-solid fa-chevron-left mr-1"></i> 上一页
+            </button>
+            <div class="text-slate-400 text-xs hidden sm:block bg-slate-50 px-3 py-1 rounded-full border border-slate-100">
+                💡 可使用键盘左右方向键切换
+            </div>
+            <button id="btn-next" class="px-5 py-2 rounded font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm">
+                下一页 <i class="fa-solid fa-chevron-right ml-1"></i>
+            </button>
+        </div>
+    </footer>
+
     <script>
-        function showStep(stepNumber) {
-            // 样式定义
-            const activeStyles = {
-                1: ['bg-blue-600', 'text-white', 'border-blue-600', 'shadow-md'],
-                2: ['bg-purple-600', 'text-white', 'border-purple-600', 'shadow-md'],
-                3: ['bg-amber-500', 'text-white', 'border-amber-500', 'shadow-md']
-            };
-            const inactiveStyles = ['bg-white', 'text-slate-500', 'border-slate-200'];
+        document.addEventListener('DOMContentLoaded', () => {
+            const totalSteps = 8;
+            let currentStep = 1;
 
-            for (let i = 1; i <= 3; i++) {
-                const btn = document.getElementById(`btn-${i}`);
-                const content = document.getElementById(`step-${i}`);
+            const slides = document.querySelectorAll('.slide');
+            const btnPrev = document.getElementById('btn-prev');
+            const btnNext = document.getElementById('btn-next');
+            const indicator = document.getElementById('current-step-indicator');
+            const navTabs = document.querySelectorAll('.nav-tab');
 
-                // 重置所有按钮基础样式
-                btn.classList.remove('bg-blue-600', 'bg-purple-600', 'bg-amber-500', 'text-white', 'border-blue-600', 'border-purple-600', 'border-amber-500', 'shadow-md');
-                
-                if (i === stepNumber) {
-                    // 激活当前按钮和内容
-                    btn.classList.add(...activeStyles[i]);
-                    btn.classList.remove(...inactiveStyles);
-                    content.classList.remove('hidden');
-                    content.classList.add('block');
-                } else {
-                    // 将非当前按钮设为未激活状态并隐藏内容
-                    btn.classList.add(...inactiveStyles);
-                    content.classList.remove('block');
-                    content.classList.add('hidden');
+            function updateUI() {
+                // 1. 切换幻灯片
+                slides.forEach((slide, index) => {
+                    if (index + 1 === currentStep) {
+                        slide.classList.remove('hidden');
+                        slide.classList.add('slide-enter');
+                    } else {
+                        slide.classList.add('hidden');
+                        slide.classList.remove('slide-enter');
+                    }
+                });
+
+                // 2. 更新底部按钮与文字
+                btnPrev.disabled = currentStep === 1;
+                btnNext.disabled = currentStep === totalSteps;
+                indicator.textContent = currentStep;
+
+                // 3. 更新顶部导航按钮状态
+                navTabs.forEach((tab, index) => {
+                    const stepNum = index + 1;
+                    if (stepNum === currentStep) {
+                        // 激活状态: 统一使用 Indigo 强调色
+                        tab.className = `nav-tab whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition-all border flex items-center gap-1 bg-indigo-600 text-white border-indigo-600 shadow-md cursor-default`;
+                        tab.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+                        // 激活时，将其内部的子标签字色做下反转，防止看不清
+                        const subTag = tab.querySelector('span:last-child');
+                        if (subTag) {
+                            subTag.className = "bg-indigo-800/50 text-white border border-indigo-400 text-[9px] px-1.5 py-0.5 rounded-md ml-1 hidden sm:inline-block";
+                        }
+                    } else {
+                        // 未激活状态: 恢复原始样式
+                        tab.className = `nav-tab whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition-all border cursor-pointer flex items-center gap-1 bg-white text-slate-500 border-slate-200 hover:bg-slate-50 hover:shadow-sm`;
+                        // 恢复子标签的颜色逻辑
+                        const subTag = tab.querySelector('span:last-child');
+                        if (subTag) {
+                            if(stepNum <= 3) subTag.className = "bg-blue-100/50 text-blue-500 border border-blue-200 text-[9px] px-1.5 py-0.5 rounded-md ml-1 hidden sm:inline-block";
+                            else if(stepNum == 4) subTag.className = "bg-amber-100/50 text-amber-600 border border-amber-200 text-[9px] px-1.5 py-0.5 rounded-md ml-1 hidden sm:inline-block";
+                            else if(stepNum == 5) subTag.className = "bg-orange-100/50 text-orange-600 border border-orange-200 text-[9px] px-1.5 py-0.5 rounded-md ml-1 hidden sm:inline-block";
+                            else if(stepNum == 6) subTag.className = "bg-red-100/50 text-red-600 border border-red-200 text-[9px] px-1.5 py-0.5 rounded-md ml-1 hidden sm:inline-block";
+                            else if(stepNum == 7) subTag.className = "bg-rose-100/50 text-rose-600 border border-rose-200 text-[9px] px-1.5 py-0.5 rounded-md ml-1 hidden sm:inline-block";
+                        }
+                    }
+                });
+            }
+
+            // 暴露到全局供 onclick 调用
+            window.goToStep = function(step) {
+                if (step >= 1 && step <= totalSteps) {
+                    currentStep = step;
+                    updateUI();
                 }
             }
-        }
+
+            btnPrev.addEventListener('click', () => goToStep(currentStep - 1));
+            btnNext.addEventListener('click', () => goToStep(currentStep + 1));
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowRight') goToStep(currentStep + 1);
+                if (e.key === 'ArrowLeft') goToStep(currentStep - 1);
+            });
+
+            // 初始执行一次
+            updateUI();
+        });
     </script>
 </body>
 </html>
